@@ -1,0 +1,27 @@
+{
+  "name": "tennis-jabajwo",
+  "version": "0.1.0",
+  "description": "강일/명일 테니스장 예약현황 빈자리 알림 MVP",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node src/checker.js",
+    "test": "vitest run",
+    "zip": "node scripts/make-zip.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.49.1"
+  },
+  "devDependencies": {
+    "archiver": "^7.0.1",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>테니스 잡아줘</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>테니스 잡아줘</h1>
+        <button id="checkNow" type="button">지금 확인</button>
+      </header>
+
+      <form id="watchForm" class="panel">
+        <fieldset>
+          <legend>테니스장</legend>
+          <label><input type="checkbox" name="venues" value="gangil" /> 강일테니스장</label>
+          <label><input type="checkbox" name="venues" value="myeongil" /> 명일테니스장</label>
+        </fieldset>
+
+        <label class="date-field">
+          <span>날짜</span>
+          <input type="date" name="date" required />
+        </label>
+
+        <fieldset>
+          <legend>시간대</legend>
+          <div id="timeSlots" class="slot-grid"></div>
+        </fieldset>
+
+        <button type="submit" class="primary">빈자리 알림 받기</button>
+        <p id="status" role="status"></p>
+      </form>
+
+      <section>
+        <h2>등록된 알림 조건</h2>
+        <div id="watches" class="watch-list"></div>
+      </section>
+
+      <section id="testTools" class="test-tools hidden">
+        <h2>테스트</h2>
+        <button id="fakeAvailability" type="button">가상 빈자리 발생</button>
+      </section>
+    </main>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
