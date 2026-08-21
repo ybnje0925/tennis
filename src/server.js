@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { TIME_SLOTS, VENUES } from "./constants.js";
-import { addWatch, deleteWatch, loadState } from "./storage.js";
+import { addWatch, deleteWatch, loadState, saveState, updateWatch } from "./storage.js";
 import { runCheckCycle, startScheduler } from "./monitor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +29,15 @@ app.get("/api/watches", async (req, res, next) => {
   }
 });
 
+app.get("/api/status", async (req, res, next) => {
+  try {
+    const state = await loadState();
+    res.json(state.system);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/watches", async (req, res, next) => {
   try {
     const { venues, date, times } = req.body;
@@ -36,7 +45,17 @@ app.post("/api/watches", async (req, res, next) => {
     if (!date) throw new Error("날짜를 선택하세요.");
     if (!Array.isArray(times) || times.length === 0) throw new Error("시간대를 선택하세요.");
     const watch = await addWatch({ venues, date, times });
-    res.status(201).json(watch);
+    const immediate = await runCheckCycle().catch((error) => ({ errors: [error.message] }));
+    res.status(201).json({ watch, immediate });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/watches/:id", async (req, res, next) => {
+  try {
+    const watch = await updateWatch(req.params.id, req.body);
+    res.json(watch);
   } catch (error) {
     next(error);
   }
@@ -53,11 +72,24 @@ app.delete("/api/watches/:id", async (req, res, next) => {
 
 app.post("/api/check-now", async (req, res, next) => {
   try {
+    const state = await loadState();
+    const now = Date.now();
+    const lastManual = state.system.lastManualCheckAt ? Date.parse(state.system.lastManualCheckAt) : 0;
+    const cooldownMs = 45_000;
+    if (lastManual && now - lastManual < cooldownMs) {
+      return res.status(429).json({
+        error: `지금 확인은 ${Math.ceil((cooldownMs - (now - lastManual)) / 1000)}초 후 다시 시도하세요.`
+      });
+    }
+    state.system.lastManualCheckAt = new Date(now).toISOString();
+    await saveState(state);
+
     const result = await runCheckCycle();
     res.json({
       checkedAt: result.checkedAt,
       reservationCount: result.reservations.length,
       notificationCount: result.notifications.length,
+      errors: result.errors,
       sample: result.reservations.slice(0, 5)
     });
   } catch (error) {

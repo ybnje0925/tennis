@@ -1,5 +1,6 @@
 import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
 import { VENUES } from "./constants.js";
+import { runHeadlessDiagnosis } from "./headlessDiagnose.js";
 import { parseReservationDom } from "./parser.js";
 import { fileURLToPath } from "node:url";
 
@@ -22,19 +23,13 @@ export async function checkVenue(page, venueId) {
 }
 
 export async function checkAllVenues() {
-  const { context, page } = await openGangdongSession();
-  try {
-    const loggedIn = await ensureLoggedIn(page);
-    if (!loggedIn) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
+  const diagnosis = await runHeadlessDiagnosis();
+  if (!diagnosis.loginSucceeded) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
+  if (!diagnosis.webGatePassed) throw new Error("WebGate 정상 통과 여부를 확인하지 못했습니다.");
 
-    const result = {};
-    for (const venueId of Object.keys(VENUES)) {
-      result[venueId] = await checkVenue(page, venueId);
-    }
-    return result;
-  } finally {
-    await context.close();
-  }
+  return Object.fromEntries(
+    Object.entries(diagnosis.venues).map(([venueId, result]) => [venueId, result.slots])
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

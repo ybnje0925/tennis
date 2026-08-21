@@ -43,11 +43,41 @@ h2 {
 }
 
 .panel,
-.watch {
+.watch,
+.status-panel,
+.logs {
   background: #ffffff;
   border: 1px solid #d9e2d8;
   border-radius: 8px;
   padding: 16px;
+}
+
+.status-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.status-panel div {
+  min-height: 62px;
+  padding: 10px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #fbfcfb;
+}
+
+.status-panel span {
+  display: block;
+  margin-bottom: 6px;
+  color: #617064;
+  font-size: 13px;
+}
+
+.status-panel strong {
+  display: block;
+  font-size: 15px;
+  letter-spacing: 0;
 }
 
 fieldset {
@@ -104,6 +134,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 button.primary {
   width: 100%;
   min-height: 48px;
@@ -128,13 +163,48 @@ button.primary {
   gap: 10px;
 }
 
+.watch.disabled {
+  background: #f6f7f6;
+  color: #657067;
+}
+
 .watch strong {
   display: block;
 }
 
-.watch button {
-  justify-self: end;
+.watch-state {
+  margin-top: 8px;
+  color: #237a3b;
+  font-weight: 700;
+}
+
+.watch.disabled .watch-state {
+  color: #7a6551;
+}
+
+.watch-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.watch-actions button {
+  min-width: 72px;
   padding: 0 14px;
+}
+
+.logs {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  color: #3f5a44;
+  font-size: 14px;
+}
+
+.logs div {
+  padding-bottom: 8px;
+  border-bottom: 1px solid #edf2ec;
 }
 
 .empty {
@@ -152,6 +222,10 @@ button.primary {
   }
 
   .slot-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .status-panel {
     grid-template-columns: 1fr;
   }
 }

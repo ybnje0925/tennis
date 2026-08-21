@@ -38,6 +38,8 @@ npm run check
 npm run diagnose:headless
 ```
 
+서버 실행 중에는 등록된 알림 조건을 기준으로 10분마다 자동 조회합니다. 같은 주기에 강일/명일 예약현황은 각각 1회만 조회하고, 가져온 결과를 모든 조건과 비교합니다.
+
 ## 동작 방식
 
 1. Playwright Chromium persistent context를 실행합니다.
@@ -53,8 +55,11 @@ npm run diagnose:headless
 
 - 알림 조건과 마지막 상태: `data/state.json`
 - Chromium 세션: `sessions/gangdong-profile/`
+- Headless storage state: `sessions/gangdong-storage-state.json`
 
 두 경로는 `.gitignore`와 ZIP 제외 대상입니다.
+
+저장되는 알림 조건은 `enabled` 값을 포함하며, UI에서 삭제하거나 켜고 끌 수 있습니다. 마지막 예약상태도 함께 저장해 `예약완료 → 예약가능` 변화에서만 알림을 보내고, 같은 빈자리가 계속 유지될 때는 중복 전송하지 않습니다.
 
 ## Telegram 설정
 
