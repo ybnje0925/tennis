@@ -6,10 +6,10 @@ import { LOGIN_URL } from "./constants.js";
 
 const SESSION_DIR = path.resolve("sessions", "gangdong-profile");
 
-export async function openGangdongSession() {
+export async function openGangdongSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
   const context = await chromium.launchPersistentContext(SESSION_DIR, {
-    headless: config.headless,
+    headless: options.headless ?? config.headless,
     viewport: { width: 1365, height: 900 },
     locale: "ko-KR"
   });
@@ -29,7 +29,7 @@ export async function ensureLoggedIn(page) {
 
   const submit = page.locator("button[type='submit'], input[type='submit'], button:has-text('로그인'), input[value*='로그인']").first();
   await Promise.all([
-    page.waitForLoadState("domcontentloaded").catch(() => {}),
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }).catch(() => {}),
     submit.click()
   ]);
   await page.waitForTimeout(1200);

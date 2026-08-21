@@ -25,6 +25,43 @@ function parseAvailableCount(text) {
 }
 
 export async function parseReservationDom(page, venueId) {
+  const calendarItems = await page.evaluate((venue) => {
+    const pageText = document.body.innerText || "";
+    const yearMonth = pageText.match(/(20\d{2})\s*\.\s*([01]?\d)/);
+    if (!yearMonth) return [];
+
+    const year = yearMonth[1];
+    const month = yearMonth[2].padStart(2, "0");
+    const cells = Array.from(document.querySelectorAll(".calendar1_table td, table td"));
+
+    return cells.flatMap((cell) => {
+      const cellText = (cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim();
+      const day = cellText.match(/^([0-3]?\d)\b/)?.[1];
+      if (!day) return [];
+
+      return Array.from(cell.querySelectorAll("li")).flatMap((item) => {
+        const text = (item.innerText || item.textContent || "").replace(/\s+/g, " ").trim();
+        const slot = text.match(/([0-2]\d:00\s*~\s*[0-2]\d:00)/)?.[1]?.replace(/\s+/g, "");
+        const status = text.match(/예약가능|예약완료/)?.[0];
+        if (!slot || !status) return [];
+
+        const count = text.match(/\((\d+)\)/)?.[1];
+        const available = status === "예약가능";
+        return {
+          venue,
+          date: `${year}-${month}-${day.padStart(2, "0")}`,
+          time: slot,
+          available,
+          availableCount: available && count ? Number.parseInt(count, 10) : 0
+        };
+      });
+    });
+  }, venueId);
+
+  if (calendarItems.length > 0) {
+    return normalizeReservations(calendarItems, venueId);
+  }
+
   const rows = await page.evaluate(() => {
     const elements = Array.from(document.querySelectorAll("tr, td, th, li, div, span, a"));
     return elements
@@ -74,7 +111,23 @@ export function parseReservationTexts(texts, venueId, fallbackYear = new Date().
     }
   }
 
+  return normalizeReservations(results, venueId);
+}
+
+function normalizeReservations(items, venueId) {
+  const venue = VENUES[venueId];
   const map = new Map();
-  for (const item of results) map.set(`${item.venue}|${item.date}|${item.time}`, item);
+
+  for (const item of items) {
+    map.set(`${item.venue}|${item.date}|${item.time}`, {
+      venue: venue.id,
+      venueName: venue.name,
+      date: item.date,
+      time: item.time,
+      available: item.available,
+      availableCount: item.available ? item.availableCount : 0
+    });
+  }
+
   return Array.from(map.values()).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
 }
