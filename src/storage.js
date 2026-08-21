@@ -1,8 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { config } from "./config.js";
 
-const DATA_DIR = path.resolve("data");
+const DATA_DIR = path.resolve(config.dataDir);
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 
 const initialState = {

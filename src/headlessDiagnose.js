@@ -3,10 +3,11 @@ import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureLoggedIn, isLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
+import { config } from "./config.js";
 import { VENUES } from "./constants.js";
 import { parseReservationDom } from "./parser.js";
 
-const SESSION_DIR = path.resolve("sessions");
+const SESSION_DIR = path.resolve(config.sessionDir);
 const STORAGE_STATE_PATH = path.join(SESSION_DIR, "gangdong-storage-state.json");
 
 async function fileExists(filePath) {

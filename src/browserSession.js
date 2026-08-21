@@ -4,7 +4,7 @@ import path from "node:path";
 import { config, assertLoginConfig } from "./config.js";
 import { LOGIN_URL } from "./constants.js";
 
-const SESSION_DIR = path.resolve("sessions", "gangdong-profile");
+const SESSION_DIR = path.resolve(config.sessionDir, "gangdong-profile");
 
 export async function openGangdongSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });

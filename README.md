@@ -21,6 +21,9 @@ GANGDONG_USER_ID=
 GANGDONG_USER_PASSWORD=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+HEADLESS=true
+ENABLE_TEST_TOOLS=false
+CHECK_INTERVAL_MINUTES=10
 ```
 
 ## 실행
@@ -58,6 +61,8 @@ npm run diagnose:headless
 - Headless storage state: `sessions/gangdong-storage-state.json`
 
 두 경로는 `.gitignore`와 ZIP 제외 대상입니다.
+
+클라우드에서는 `DATA_DIR`, `SESSION_DIR` 또는 Railway Volume을 사용합니다. Railway Volume이 연결되어 있으면 `RAILWAY_VOLUME_MOUNT_PATH`를 기준으로 저장 경로를 잡을 수 있고, Docker 기본값은 `/data/data`, `/data/sessions`입니다.
 
 저장되는 알림 조건은 `enabled` 값을 포함하며, UI에서 삭제하거나 켜고 끌 수 있습니다. 마지막 예약상태도 함께 저장해 `예약완료 → 예약가능` 변화에서만 알림을 보내고, 같은 빈자리가 계속 유지될 때는 중복 전송하지 않습니다.
 
@@ -100,5 +105,28 @@ npm test
 docker build -t tennis-jabajwo .
 docker run --env-file .env -p 3000:3000 tennis-jabajwo
 ```
+
+컨테이너 안에서는 Playwright 공식 이미지를 사용하며 `HEADLESS=true`로 Chromium을 실행합니다. Health check endpoint는 `/health`입니다.
+
+## Railway 배포
+
+Railway는 루트의 `Dockerfile`과 `railway.json`을 사용합니다.
+
+서비스 변수에 다음 값을 설정합니다.
+
+```env
+GANGDONG_USER_ID=
+GANGDONG_USER_PASSWORD=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+HEADLESS=true
+ENABLE_TEST_TOOLS=false
+CHECK_INTERVAL_MINUTES=10
+RAILWAY_RUN_UID=0
+```
+
+알림 조건과 세션을 유지하려면 Railway Volume을 서비스에 연결하고 mount path를 `/data`로 설정합니다. Docker 기본 저장 경로가 `/data/data`, `/data/sessions`이므로 이 Volume에 상태와 세션이 저장됩니다.
+
+Railway 서비스 설정에서 Public Networking의 도메인을 생성하면 기존 웹 UI에 접속할 수 있습니다. Healthcheck Path는 `/health`입니다.
 
 클라우드 서버에서는 장기 실행 Chromium이 가능한 Railway, Render, Fly.io, VPS 같은 환경을 사용하세요. Vercel Serverless 함수처럼 브라우저를 오래 띄우는 환경은 이 용도에 맞지 않습니다.

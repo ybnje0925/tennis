@@ -12,6 +12,10 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
+
 app.get("/api/options", (req, res) => {
   res.json({
     venues: Object.values(VENUES).map(({ id, name }) => ({ id, name })),
@@ -84,7 +88,7 @@ app.post("/api/check-now", async (req, res, next) => {
     state.system.lastManualCheckAt = new Date(now).toISOString();
     await saveState(state);
 
-    const result = await runCheckCycle();
+    const result = await runCheckCycle({ forceCheck: true });
     res.json({
       checkedAt: result.checkedAt,
       reservationCount: result.reservations.length,

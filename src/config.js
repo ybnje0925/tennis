@@ -15,6 +15,8 @@ export const config = {
   gangdongUserPassword: process.env.GANGDONG_USER_PASSWORD || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
+  dataDir: process.env.DATA_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/data` : "data"),
+  sessionDir: process.env.SESSION_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/sessions` : "sessions"),
   enableTestTools: bool(process.env.ENABLE_TEST_TOOLS, false),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),

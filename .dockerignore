@@ -1,0 +1,17 @@
+node_modules
+.env
+.env.*
+!.env.example
+data
+sessions
+logs
+cache
+tmp
+*.log
+*.zip
+.git
+.agents
+.codex
+playwright-report
+test-results
+.DS_Store

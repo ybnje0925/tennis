@@ -56,10 +56,10 @@ export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMi
   return next.toISOString();
 }
 
-export async function runCheckCycle({ checker = checkAllVenues, notifier = sendTelegram } = {}) {
+export async function runCheckCycle({ checker = checkAllVenues, notifier = sendTelegram, forceCheck = false } = {}) {
   const state = await loadState();
   const enabledWatches = state.watches.filter((watch) => watch.enabled !== false);
-  if (enabledWatches.length === 0) {
+  if (enabledWatches.length === 0 && !forceCheck) {
     const checkedAt = new Date().toISOString();
     state.system.lastCheckedAt = checkedAt;
     state.system.nextCheckAt = nextRunAt();
@@ -82,7 +82,7 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
   }
 
   const reservations = Object.values(checked).flat();
-  const notifications = findNotifications(state, reservations);
+  const notifications = forceCheck && enabledWatches.length === 0 ? [] : findNotifications(state, reservations);
 
   const checkedAt = new Date().toISOString();
   for (const venueId of Object.keys(VENUES)) {
