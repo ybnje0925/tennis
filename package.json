@@ -9,6 +9,10 @@
     "dev": "node --watch src/server.js",
     "check": "node src/checker.js",
     "diagnose": "node src/diagnose.js",
+    "diagnose:headless": "node src/headlessDiagnose.js",
+    "telegram:test": "node src/telegramTest.js",
+    "alert:test": "node src/alertTest.js",
+    "alert:test:mock": "node src/alertTest.js --mock",
     "test": "vitest run",
     "zip": "node scripts/make-zip.js"
   },

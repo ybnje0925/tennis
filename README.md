@@ -14,6 +14,15 @@ copy .env.example .env
 
 `.env`에 실제 값을 입력합니다.
 
+필요한 환경변수:
+
+```env
+GANGDONG_USER_ID=
+GANGDONG_USER_PASSWORD=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
 ## 실행
 
 ```bash
@@ -26,6 +35,7 @@ npm start
 
 ```bash
 npm run check
+npm run diagnose:headless
 ```
 
 ## 동작 방식
@@ -52,6 +62,24 @@ npm run check
 2. 봇에게 메시지를 한 번 보냅니다.
 3. `https://api.telegram.org/bot<토큰>/getUpdates`로 `chat.id`를 확인합니다.
 4. `.env`의 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`에 입력합니다.
+
+Telegram 연결만 확인하려면:
+
+```bash
+npm run telegram:test
+```
+
+실제 예약현황을 조회해 예약가능 슬롯이 있을 때만 알림을 보내려면:
+
+```bash
+npm run alert:test
+```
+
+실제 빈자리가 없을 때 메시지 포맷만 확인하려면:
+
+```bash
+npm run alert:test:mock
+```
 
 ## 테스트
 

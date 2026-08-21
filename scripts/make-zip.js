@@ -2,7 +2,7 @@ import archiver from "archiver";
 import { createWriteStream } from "node:fs";
 import { stat } from "node:fs/promises";
 
-const outputName = "tennis-jabajwo.zip";
+const outputName = process.argv[2] || "tennis-jabajwo.zip";
 const entries = [
   "package.json",
   "package-lock.json",
