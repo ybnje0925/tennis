@@ -10,6 +10,8 @@ import {
   olympicKeyFor
 } from "./providers/olympicProvider.js";
 
+const inFlightProviders = new Set();
+
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
   return `${item.venue}|${item.date}|${item.time}`;
@@ -116,15 +118,24 @@ export function activeProviderVenueIds(activeVenueIds) {
   return result;
 }
 
-export function providerNextRunAt(lastCheckedAt, pollingMinutes) {
-  if (!lastCheckedAt) return null;
-  return new Date(Date.parse(lastCheckedAt) + pollingMinutes * 60_000).toISOString();
+export function fixedSlotKey(date = new Date()) {
+  const slot = new Date(date);
+  slot.setUTCSeconds(0, 0);
+  return slot.toISOString();
 }
 
 export function isProviderDue(providerState, now = new Date()) {
-  if (!providerState?.lastCheckedAt) return true;
   const pollingMinutes = providerState.pollingMinutes || PROVIDERS[providerState.id]?.pollingMinutes || 5;
-  return Date.parse(providerState.lastCheckedAt) + pollingMinutes * 60_000 <= now.getTime();
+  return now.getUTCMinutes() % pollingMinutes === 0;
+}
+
+export function nextFixedSlotAt(date = new Date(), pollingMinutes = config.checkIntervalMinutes) {
+  const next = new Date(date);
+  const minutes = next.getUTCMinutes();
+  let addMinutes = (pollingMinutes - (minutes % pollingMinutes)) % pollingMinutes;
+  if (addMinutes === 0) addMinutes = pollingMinutes;
+  next.setUTCMinutes(minutes + addMinutes, 0, 0);
+  return next.toISOString();
 }
 
 export function filterWatchesToVenueIds(watches, venueIds) {
@@ -150,7 +161,8 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
       pollingMinutes,
       active: active.has(providerId),
       lastCheckedAt,
-      nextCheckAt: active.has(providerId) ? providerNextRunAt(lastCheckedAt, pollingMinutes) || now.toISOString() : null
+      lastProcessedSlotAt: previous.lastProcessedSlotAt || null,
+      nextCheckAt: active.has(providerId) ? nextFixedSlotAt(now, pollingMinutes) : null
     };
   }
 
@@ -172,12 +184,7 @@ function earliestActiveProviderTime(providers) {
 }
 
 export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMinutes) {
-  const next = new Date(date);
-  const minutes = next.getMinutes();
-  const addMinutes = minuteStep - (minutes % minuteStep || minuteStep);
-  next.setMinutes(minutes + addMinutes, 0, 0);
-  if (next <= date) next.setMinutes(next.getMinutes() + minuteStep, 0, 0);
-  return next.toISOString();
+  return nextFixedSlotAt(date, minuteStep);
 }
 
 export async function runCheckCycle({
@@ -185,7 +192,8 @@ export async function runCheckCycle({
   notifier = sendTelegram,
   stateLoader = loadState,
   stateSaver = saveState,
-  source = "scheduler"
+  source = "scheduler",
+  now = new Date()
 } = {}) {
   const state = await stateLoader();
   state.system.providers ||= {};
@@ -197,7 +205,7 @@ export async function runCheckCycle({
     VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
   ));
   const activeProviders = activeProviderVenueIds(activeVenueIds);
-  syncProviderSchedule(state, Array.from(activeProviders.keys()));
+  syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
 
   if (activeWatches.length === 0 || activeVenueIds.length === 0) {
     const checkedAt = new Date().toISOString();
@@ -211,16 +219,34 @@ export async function runCheckCycle({
 
   let targetVenueIds = activeVenueIds;
   let targetWatches = activeWatches;
+  let targetProviderIds = Array.from(activeProviders.keys());
+  const slotKey = fixedSlotKey(now);
   if (source === "scheduler") {
+    const dueProviderIds = new Set(targetProviderIds.filter((providerId) => {
+      const providerState = state.system.providers[providerId];
+      if (!isProviderDue(providerState, now)) return false;
+      if (providerState.lastProcessedSlotAt === slotKey) return false;
+      if (inFlightProviders.has(providerId)) return false;
+      return true;
+    }));
     targetVenueIds = activeVenueIds.filter((venueId) => {
       const providerId = VENUES[venueId]?.provider;
-      return isProviderDue(state.system.providers[providerId]);
+      return dueProviderIds.has(providerId);
     });
     targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
+    targetProviderIds = Array.from(dueProviderIds);
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
-      syncProviderSchedule(state, Array.from(activeProviders.keys()));
+      syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
       await stateSaver(state);
       return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
+    }
+
+    for (const providerId of targetProviderIds) {
+      inFlightProviders.add(providerId);
+      state.system.providers[providerId] = {
+        ...(state.system.providers[providerId] || {}),
+        lastProcessedSlotAt: slotKey
+      };
     }
   }
 
@@ -232,6 +258,7 @@ export async function runCheckCycle({
     checked = await checker({ watches: targetWatches, source });
   } catch (error) {
     const checkedAt = new Date().toISOString();
+    for (const providerId of targetProviderIds) inFlightProviders.delete(providerId);
     checked = {};
     Object.defineProperty(checked, CHECK_META, {
       value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
@@ -239,11 +266,12 @@ export async function runCheckCycle({
       configurable: true
     });
     updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
-    syncProviderSchedule(state, Array.from(activeProviders.keys()));
+    syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
     addLog(state, buildCycleSummary({ checked, activeVenueIds: targetVenueIds, vacancyCount: 0, alertCount: 0 }));
     await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
+  for (const providerId of targetProviderIds) inFlightProviders.delete(providerId);
 
   const reservations = Object.values(checked).flat();
   const notifications = findNotifications(state, reservations);
@@ -304,7 +332,7 @@ export async function runCheckCycle({
     };
   }
   updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
-  syncProviderSchedule(state, Array.from(activeProviders.keys()));
+  syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
   await stateSaver(state);
   return { checkedAt, reservations, notifications, errors };
 }

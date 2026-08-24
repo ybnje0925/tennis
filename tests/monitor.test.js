@@ -6,6 +6,7 @@ import {
   groupActiveWatchesByVenue,
   isProviderDue,
   keyFor,
+  nextFixedSlotAt,
   runCheckCycle
 } from "../src/monitor.js";
 import { CHECK_META } from "../src/checker.js";
@@ -175,6 +176,7 @@ describe("runCheckCycle active watch targeting", () => {
     return {
       checker,
       notifier: vi.fn(),
+      now: new Date("2026-08-24T10:00:00.000Z"),
       stateLoader: vi.fn(async () => current),
       stateSaver: vi.fn(async (next) => {
         current = next;
@@ -351,7 +353,7 @@ describe("runCheckCycle active watch targeting", () => {
     expect(runner.checker).not.toHaveBeenCalled();
   });
 
-  it("does not check a provider before its polling interval is due", async () => {
+  it("does not check a provider outside its fixed wall-clock slot", async () => {
     const current = state({
       system: {
         lastCheckedAt: "2026-08-24T09:00:00.000Z",
@@ -371,13 +373,13 @@ describe("runCheckCycle active watch targeting", () => {
     });
     const runner = makeRunner(current);
 
-    const result = await runCheckCycle(runner);
+    const result = await runCheckCycle({ ...runner, now: new Date("2026-08-24T10:01:00.000Z") });
 
     expect(result.notDue).toBe(true);
     expect(runner.checker).not.toHaveBeenCalled();
   });
 
-  it("checks a provider after its polling interval is due", async () => {
+  it("checks a provider on its fixed wall-clock slot", async () => {
     const current = state({
       system: {
         lastCheckedAt: "2026-08-24T09:00:00.000Z",
@@ -397,26 +399,120 @@ describe("runCheckCycle active watch targeting", () => {
     });
     const runner = makeRunner(current);
 
-    await runCheckCycle(runner);
+    await runCheckCycle({ ...runner, now: new Date("2026-08-24T10:00:00.000Z") });
 
     expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps registration time from creating user-specific scheduler offsets", async () => {
+    const watches = [
+      { id: "a", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true, createdAt: "2026-08-24T10:51:00.000Z" },
+      { id: "b", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["10:00~12:00"], enabled: true, createdAt: "2026-08-24T10:52:00.000Z" },
+      { id: "c", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["20:00~22:00"], enabled: true, createdAt: "2026-08-24T10:53:00.000Z" }
+    ];
+    const current = state({ watches });
+    const runner = makeRunner(current);
+
+    await runCheckCycle({ ...runner, now: new Date("2026-08-24T09:54:00.000Z") });
+    expect(runner.checker).not.toHaveBeenCalled();
+
+    await runCheckCycle({ ...runner, now: new Date("2026-08-24T10:00:00.000Z") });
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+    expect(runner.checker.mock.calls[0][0].watches).toHaveLength(3);
+  });
+
+  it("does not increase common provider checks for 100 users watching the same venue date", async () => {
+    const users = Array.from({ length: 100 }, (_, index) => ({
+      id: `u${index}`,
+      telegramChatId: `chat-${index}`,
+      telegramConnected: true,
+      enabled: true
+    }));
+    const watches = users.map((user, index) => ({
+      id: `w${index}`,
+      userId: user.id,
+      venues: ["gangil"],
+      date: "2026-08-29",
+      times: [index % 2 === 0 ? "18:00~20:00" : "10:00~12:00"],
+      enabled: true
+    }));
+    const runner = makeRunner(state({ users, watches }));
+
+    await runCheckCycle({ ...runner, now: new Date("2026-08-24T10:00:00.000Z") });
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("deduplicates duplicate scheduler callbacks for the same provider slot", async () => {
+    const current = state();
+    const runner = makeRunner(current);
+    const now = new Date("2026-08-24T10:00:00.000Z");
+
+    await runCheckCycle({ ...runner, now });
+    await runCheckCycle({ ...runner, now });
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a second provider check while the previous slot is still in flight", async () => {
+    let release;
+    const checker = vi.fn(() => new Promise((resolve) => {
+      release = () => resolve({ gangil: [] });
+    }));
+    const current = state();
+    const runner = makeRunner(current, checker);
+
+    const first = runCheckCycle({ ...runner, now: new Date("2026-08-24T10:00:00.000Z") });
+    await runCheckCycle({ ...runner, now: new Date("2026-08-24T10:10:00.000Z") });
+    release();
+    await first;
+
+    expect(checker).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("isProviderDue", () => {
-  it("uses provider polling minutes to decide due state", () => {
-    const now = new Date("2026-08-24T09:05:00.000Z");
+  it("uses fixed wall-clock slots to decide due state", () => {
+    const at1910 = new Date("2026-08-24T10:10:00.000Z");
+    const at1915 = new Date("2026-08-24T10:15:00.000Z");
 
     expect(isProviderDue({
       id: "gangdong",
-      pollingMinutes: 5,
-      lastCheckedAt: "2026-08-24T09:00:00.000Z"
-    }, now)).toBe(true);
+      pollingMinutes: 5
+    }, at1910)).toBe(true);
+    expect(isProviderDue({
+      id: "songpa",
+      pollingMinutes: 5
+    }, at1910)).toBe(true);
+    expect(isProviderDue({
+      id: "olympic",
+      pollingMinutes: 10
+    }, at1910)).toBe(true);
     expect(isProviderDue({
       id: "gangdong",
-      pollingMinutes: 7,
-      lastCheckedAt: "2026-08-24T09:00:00.000Z"
-    }, now)).toBe(false);
+      pollingMinutes: 5
+    }, at1915)).toBe(true);
+    expect(isProviderDue({
+      id: "songpa",
+      pollingMinutes: 5
+    }, at1915)).toBe(true);
+    expect(isProviderDue({
+      id: "olympic",
+      pollingMinutes: 10
+    }, at1915)).toBe(false);
+  });
+});
+
+describe("nextFixedSlotAt", () => {
+  it("calculates the next absolute wall-clock slot", () => {
+    expect(nextFixedSlotAt(new Date("2026-08-24T10:01:00.000Z"), 5)).toBe("2026-08-24T10:05:00.000Z");
+    expect(nextFixedSlotAt(new Date("2026-08-24T10:04:00.000Z"), 5)).toBe("2026-08-24T10:05:00.000Z");
+    expect(nextFixedSlotAt(new Date("2026-08-24T10:05:01.000Z"), 5)).toBe("2026-08-24T10:10:00.000Z");
+    expect(nextFixedSlotAt(new Date("2026-08-24T10:56:00.000Z"), 5)).toBe("2026-08-24T11:00:00.000Z");
+  });
+
+  it("sets the next check from restart time to the next fixed slot", () => {
+    expect(nextFixedSlotAt(new Date("2026-08-24T10:52:00.000Z"), 5)).toBe("2026-08-24T10:55:00.000Z");
   });
 });
 
