@@ -5,7 +5,8 @@ import {
   ensureOlympicLoggedIn,
   fetchOlympicAvailabilityForDate,
   inspectOlympicReservationPage,
-  openOlympicSession
+  openOlympicSession,
+  readOlympicCalendar
 } from "./providers/olympicProvider.js";
 
 function defaultDate() {
@@ -21,13 +22,24 @@ export async function runOlympicDiagnosis(options = {}) {
   try {
     const loginSucceeded = await ensureOlympicLoggedIn(page);
     const pageSnapshot = loginSucceeded ? await inspectOlympicReservationPage(page) : null;
+    const calendar = loginSucceeded ? await readOlympicCalendar(page) : null;
     const byCourtType = {};
     const slots = [];
     if (loginSucceeded) {
       for (const courtType of Object.keys(COURT_TYPES)) {
-        const availability = await fetchOlympicAvailabilityForDate(page, { date, courtType });
-        byCourtType[courtType] = availability;
-        slots.push(...availability.slots);
+        try {
+          const availability = await fetchOlympicAvailabilityForDate(page, { date, courtType });
+          byCourtType[courtType] = availability;
+          slots.push(...availability.slots);
+        } catch (error) {
+          byCourtType[courtType] = {
+            error: error.message,
+            code: error.code || "",
+            dateStatus: null,
+            timeSlots: [],
+            slots: []
+          };
+        }
       }
     }
 
@@ -35,6 +47,7 @@ export async function runOlympicDiagnosis(options = {}) {
       loginSucceeded,
       reservationPageAccess: loginSucceeded && !/\/sso\/usr\/login\/view/.test(page.url()),
       date,
+      calendar,
       pageSnapshot,
       byCourtType,
       slots
@@ -46,15 +59,35 @@ export async function runOlympicDiagnosis(options = {}) {
 
 function printDiagnosis(result) {
   console.log("[Olympic]");
-  console.log(result.loginSucceeded ? "로그인 성공" : "로그인 실패");
+  console.log(result.loginSucceeded ? "Olympic login success" : "Olympic login failed");
   console.log(result.reservationPageAccess ? "예약신청 페이지 접근 성공" : "예약신청 페이지 접근 실패");
   console.log("");
-  console.log(result.date);
+  console.log(`Target date: ${result.date}`);
+  console.log(`Date cell found: ${result.calendar?.cells?.some((cell) => cell.date === result.date) ? "yes" : "no"}`);
+  const targetCell = result.calendar?.cells?.find((cell) => cell.date === result.date);
+  if (targetCell) console.log(`Available count: ${targetCell.possibleCount}`);
   console.log("");
+
+  if (result.calendar) {
+    console.log("Olympic calendar period:");
+    console.log(result.calendar.periodText || "unknown");
+    console.log("");
+    console.log("Detected date cells:");
+    for (const cell of result.calendar.cells) {
+      console.log(cell.day);
+    }
+    console.log("");
+    for (const cell of result.calendar.cells) {
+      console.log(cell.rawText);
+    }
+    console.log("");
+  }
 
   for (const [courtType, availability] of Object.entries(result.byCourtType || {})) {
     const label = COURT_TYPES[courtType];
-    if (availability.dateStatus) {
+    if (availability.error) {
+      console.log(`${label} 조회 실패: ${availability.error}`);
+    } else if (availability.dateStatus) {
       console.log(`${label} 날짜 상태: 가능 ${availability.dateStatus.possibleCount}건 / 진행 ${availability.dateStatus.pendingCount}건 / 마감 ${availability.dateStatus.closedCount}건`);
     } else {
       console.log(`${label} 날짜 상태: 확인 못함`);

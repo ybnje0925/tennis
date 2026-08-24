@@ -5,6 +5,11 @@ import { config, assertOlympicLoginConfig } from "../config.js";
 import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
+const DATE_LOOKUP_STATES = {
+  DATE_NOT_FOUND: "DATE_NOT_FOUND",
+  AVAILABLE_COUNT_ZERO: "AVAILABLE_COUNT_ZERO",
+  FOUND: "FOUND"
+};
 
 export const COURT_TYPES = {
   indoor: "실내",
@@ -37,7 +42,10 @@ export async function isOlympicLoggedIn(page) {
 }
 
 export async function ensureOlympicLoggedIn(page) {
-  if (await isOlympicLoggedIn(page)) return true;
+  if (await isOlympicLoggedIn(page)) {
+    await openOlympicReservationPage(page).catch(() => {});
+    if (!/\/sso\/usr\/login\/view/.test(page.url())) return true;
+  }
 
   assertOlympicLoginConfig();
   await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" });
@@ -58,14 +66,26 @@ export async function ensureOlympicLoggedIn(page) {
     page.locator("button:has-text('로그인'), .btn_login").first().click()
   ]);
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-  await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await openOlympicReservationPage(page).catch(() => {});
 
   const loggedIn = !/\/sso\/usr\/login\/view/.test(page.url());
   if (!loggedIn && dialogMessages.length > 0) {
     throw new Error(`Olympic login failed: ${dialogMessages.at(-1)}`);
   }
   return loggedIn;
+}
+
+export async function openOlympicReservationPage(page) {
+  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+
+  const reservationLink = page.locator("a.btn_app:visible, a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
+    reservationLink.click()
+  ]);
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await waitForOlympicCalendar(page).catch(() => {});
 }
 
 export async function selectCourtType(page, courtType) {
@@ -88,9 +108,44 @@ export async function selectCourtType(page, courtType) {
 }
 
 export async function selectDate(page, date) {
-  const day = Number(date.slice(8, 10));
-  const clicked = await page.evaluate(({ isoDate, dayText }) => {
+  const clicked = await page.evaluate(({ isoDate }) => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+    const parsePeriod = (text) => {
+      const full = normalize(text).match(/(20\d{2})\s*\.\s*([01]?\d)\s*\.\s*([0-3]?\d)\s*~\s*(?:(20\d{2})\s*\.\s*)?([01]?\d)\s*\.\s*([0-3]?\d)/);
+      if (!full) return null;
+      const pad = (value) => String(value).padStart(2, "0");
+      const startYear = full[1];
+      const endYear = full[4] || startYear;
+      return {
+        startDate: `${startYear}-${pad(full[2])}-${pad(full[3])}`,
+        endDate: `${endYear}-${pad(full[5])}-${pad(full[6])}`
+      };
+    };
+    const parseIso = (value) => {
+      const [year, month, day] = value.split("-").map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    };
+    const addDays = (value, days) => {
+      const next = typeof value === "string" ? parseIso(value) : new Date(value.getTime());
+      next.setUTCDate(next.getUTCDate() + days);
+      return next;
+    };
+    const extractDay = (text) => {
+      const datePrefix = normalize(text).match(/^([0-3]?\d)\b/);
+      if (datePrefix) return datePrefix[1].padStart(2, "0");
+      const beforeStatus = normalize(text).match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*\d+\s*건)/);
+      return beforeStatus ? beforeStatus[1].padStart(2, "0") : null;
+    };
+    const findNextDateForDay = (startDate, endDate, day) => {
+      const targetDay = Number(day);
+      let cursor = parseIso(startDate);
+      const end = endDate ? parseIso(endDate) : addDays(cursor, 40);
+      while (cursor <= end) {
+        if (cursor.getUTCDate() === targetDay) return cursor.toISOString().slice(0, 10);
+        cursor = addDays(cursor, 1);
+      }
+      return null;
+    };
     const dateInput = document.querySelector("input[type='date']");
     if (dateInput) {
       dateInput.value = isoDate;
@@ -99,48 +154,78 @@ export async function selectDate(page, date) {
       return true;
     }
 
-    const candidates = Array.from(document.querySelectorAll("td, button, a, label"));
-    const target = candidates.find((element) => {
-      const text = normalize(`${element.innerText || element.textContent || ""} ${element.title || ""} ${element.getAttribute("aria-label") || ""}`);
-      return new RegExp(`(^|\\D)${dayText}(\\D|$)`).test(text) && /가능|진행|마감|예약|신청|선택/.test(text);
+    const root = Array.from(document.querySelectorAll(".online_area .app_type .cate_con, .online_area, .app_type, section, article, main, body"))
+      .find((element) => /가능\s*\d+\s*건/.test(normalize(element.innerText || element.textContent || ""))) || document.body;
+    const period = parsePeriod(document.body.innerText || "");
+    let cursor = period?.startDate || isoDate.slice(0, 8) + "01";
+    const candidates = Array.from(root.querySelectorAll("li, td")).filter((element) => {
+      const text = normalize(element.innerText || element.textContent || "");
+      return /가능\s*\d+\s*건/.test(text) && /진행\s*\d+\s*건/.test(text) && /마감\s*\d+\s*건/.test(text);
     });
+
+    let target = null;
+    for (const element of candidates) {
+      const text = normalize(element.innerText || element.textContent || "");
+      const day = extractDay(text);
+      const cellDate = day && cursor ? findNextDateForDay(cursor, period?.endDate, day) : null;
+      if (cellDate === isoDate) {
+        const possibleCount = Number.parseInt(text.match(/가능\s*(\d+)\s*건/)?.[1] || "0", 10);
+        target = possibleCount > 0 ? element : null;
+        break;
+      }
+      if (cellDate) cursor = addDays(cellDate, 1).toISOString().slice(0, 10);
+    }
+
     if (!target) return false;
-    (target.querySelector("button, a, input") || target).click();
+
+    const possibleButton = target.querySelector("a, button, input");
+    if (!possibleButton) return false;
+    possibleButton.click();
     return true;
-  }, { isoDate: date, dayText: String(day) });
+  }, { isoDate: date });
 
   if (!clicked) throw new Error(`Olympic date selector not found for ${date}`);
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => /[0-2]?\d\s*시|[0-2]?\d:00\s*~/.test(document.body.innerText || ""), null, { timeout: 10_000 }).catch(() => {});
 }
 
 export async function parseOlympicDateStatuses(page, fallbackYear = new Date().getFullYear()) {
+  const snapshot = await readOlympicCalendar(page);
+  return snapshot.cells.map(({ element, ...cell }) => cell);
+}
+
+export async function readOlympicCalendar(page, fallbackYear = new Date().getFullYear()) {
+  await waitForOlympicCalendar(page).catch(() => {});
   const raw = await page.evaluate(() => {
-    const pageText = document.body.innerText || "";
-    const yearMonth = pageText.match(/(20\d{2})\s*[년./-]?\s*([01]?\d)\s*월?/);
-    const cells = Array.from(document.querySelectorAll("td, li, div, a, button"));
+    const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+    const root = Array.from(document.querySelectorAll(".online_area .app_type .cate_con, .online_area, .app_type, section, article, main, body"))
+      .find((element) => /가능\s*\d+\s*건/.test(normalize(element.innerText || element.textContent || ""))) || document.body;
+    const rawCells = Array.from(root.querySelectorAll("li, td")).filter((element) => {
+      const text = normalize(element.innerText || element.textContent || "");
+      return /가능\s*\d+\s*건/.test(text) && /진행\s*\d+\s*건/.test(text) && /마감\s*\d+\s*건/.test(text);
+    }).map((element) => ({
+      text: normalize(element.innerText || element.textContent || "")
+    }));
+
     return {
-      year: yearMonth?.[1] || "",
-      month: yearMonth?.[2] || "",
-      items: cells.map((cell) => ({
-        text: (cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim()
-      })).filter((item) => /가능\s*\d+\s*건|진행\s*\d+\s*건|마감\s*\d+\s*건/.test(item.text))
+      pageText: document.body.innerText || "",
+      rawCells
     };
   });
+  const period = parseOlympicCalendarPeriodText(raw.pageText, fallbackYear);
+  const cells = buildOlympicCalendarCells(raw.rawCells, { period, fallbackYear });
+  return {
+    periodText: period?.text || "",
+    period,
+    cells
+  };
+}
 
-  const year = raw.year || String(fallbackYear);
-  const month = raw.month ? raw.month.padStart(2, "0") : "";
-  return raw.items.flatMap(({ text }) => {
-    const day = text.match(/(^|\D)([0-3]?\d)(\D|$)/)?.[2];
-    if (!day || !month) return [];
-    return [{
-      date: `${year}-${month}-${day.padStart(2, "0")}`,
-      possibleCount: parseStatusCount(text, "가능"),
-      pendingCount: parseStatusCount(text, "진행"),
-      closedCount: parseStatusCount(text, "마감"),
-      rawText: text
-    }];
-  });
+export async function waitForOlympicCalendar(page) {
+  await page.waitForFunction(() => {
+    const text = document.body.innerText || "";
+    return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || /가능\s*\d+\s*건/.test(text);
+  }, null, { timeout: 15_000 });
 }
 
 export async function parseOlympicTimeSlots(page, date, courtType) {
@@ -314,14 +399,19 @@ export function filterOlympicSlotsByWatch(slots, watch) {
 }
 
 export async function fetchOlympicAvailabilityForDate(page, { date, courtType }) {
-  await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await openOlympicReservationPage(page);
   await selectCourtType(page, courtType);
-  await selectDate(page, date);
 
-  const dateStatuses = await parseOlympicDateStatuses(page);
-  const dateStatus = dateStatuses.find((item) => item.date === date);
-  if (dateStatus?.possibleCount === 0) return { dateStatus, timeSlots: [], slots: [] };
+  const calendar = await readOlympicCalendar(page);
+  const dateStatus = findOlympicDateStatus(calendar, date);
+  if (!dateStatus) {
+    throw new OlympicDateLookupError(date, calendar);
+  }
+  if (dateStatus.possibleCount === 0) {
+    return { lookupStatus: DATE_LOOKUP_STATES.AVAILABLE_COUNT_ZERO, calendar, dateStatus, timeSlots: [], slots: [] };
+  }
+
+  await selectDate(page, date);
 
   const timeSlots = (await parseOlympicTimeSlots(page, date, courtType)).filter((slot) => slot.available);
   const slots = [];
@@ -332,7 +422,7 @@ export async function fetchOlympicAvailabilityForDate(page, { date, courtType })
     slots.push(...courts);
   }
 
-  return { dateStatus, timeSlots, slots: uniqueOlympicSlots(slots) };
+  return { lookupStatus: DATE_LOOKUP_STATES.FOUND, calendar, dateStatus, timeSlots, slots: uniqueOlympicSlots(slots) };
 }
 
 export async function checkOlympicByWatches(watches) {
@@ -353,9 +443,19 @@ export async function checkOlympicByWatches(watches) {
     if (!loggedIn) throw new Error("Olympic login failed.");
 
     const allSlots = [];
+    const failedDateLookups = new Set();
     for (const group of groups.values()) {
-      const result = await fetchOlympicAvailabilityForDate(page, group);
-      allSlots.push(...result.slots);
+      if (failedDateLookups.has(group.date)) continue;
+      try {
+        const result = await fetchOlympicAvailabilityForDate(page, group);
+        allSlots.push(...result.slots);
+      } catch (error) {
+        if (!(error instanceof OlympicDateLookupError)) throw error;
+        failedDateLookups.add(group.date);
+        console.warn("[Olympic]");
+        console.warn(`${group.date} date lookup failed`);
+        console.warn("next retry: next scheduled check");
+      }
     }
     return uniqueOlympicSlots(allSlots);
   } finally {
@@ -368,8 +468,7 @@ export async function inspectOlympicReservationPage(page) {
   page.on("request", (request) => {
     if (/ksponco|kspo/.test(request.url())) requests.push({ method: request.method(), url: request.url() });
   });
-  await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await openOlympicReservationPage(page);
   const snapshot = await page.evaluate(() => ({
     url: location.href,
     title: document.title,
@@ -396,9 +495,139 @@ export function olympicKeyFor(item) {
   return `olympic|${item.courtType}|${item.courtNo}|${item.date}|${item.startTime}|${item.endTime}`;
 }
 
+export class OlympicDateLookupError extends Error {
+  constructor(date, calendar) {
+    super(`Olympic date selector not found for ${date}`);
+    this.name = "OlympicDateLookupError";
+    this.code = DATE_LOOKUP_STATES.DATE_NOT_FOUND;
+    this.date = date;
+    this.calendar = calendar;
+  }
+}
+
+export function parseOlympicCalendarPeriodText(text, fallbackYear = new Date().getFullYear()) {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  const full = normalized.match(/(20\d{2})\s*\.\s*([01]?\d)\s*\.\s*([0-3]?\d)\s*~\s*(?:(20\d{2})\s*\.\s*)?([01]?\d)\s*\.\s*([0-3]?\d)/);
+  if (full) {
+    const startYear = full[1];
+    const endYear = full[4] || startYear;
+    return {
+      text: `${toIsoDate(startYear, full[2], full[3]).replaceAll("-", ".")} ~ ${toIsoDate(endYear, full[5], full[6]).replaceAll("-", ".")}`,
+      startDate: toIsoDate(startYear, full[2], full[3]),
+      endDate: toIsoDate(endYear, full[5], full[6])
+    };
+  }
+
+  const yearMonth = normalized.match(/(20\d{2})\s*[년./-]?\s*([01]?\d)\s*월?/);
+  if (!yearMonth) return null;
+  return {
+    text: `${yearMonth[1]}.${String(yearMonth[2]).padStart(2, "0")}`,
+    startDate: toIsoDate(yearMonth[1] || fallbackYear, yearMonth[2], 1),
+    endDate: null
+  };
+}
+
+export function buildOlympicCalendarCells(rawCells, options = {}) {
+  const period = options.period || null;
+  const fallbackYear = options.fallbackYear || new Date().getFullYear();
+  const cells = [];
+  let cursor = period?.startDate || null;
+  let fallbackYearMonth = period?.startDate?.slice(0, 7) || `${fallbackYear}-${String(options.fallbackMonth || new Date().getMonth() + 1).padStart(2, "0")}`;
+
+  for (const raw of rawCells) {
+    const rawText = normalizeText(raw.text);
+    const day = extractOlympicCellDay(rawText);
+    if (!day) continue;
+
+    const date = cursor
+      ? findNextDateForDay(cursor, period?.endDate, day)
+      : dateFromYearMonthAndDay(fallbackYearMonth, day);
+    if (!date) continue;
+
+    cells.push({
+      date,
+      day,
+      possibleCount: parseStatusCount(rawText, "가능"),
+      pendingCount: parseStatusCount(rawText, "진행"),
+      closedCount: parseStatusCount(rawText, "마감"),
+      rawText
+    });
+
+    cursor = addDays(date, 1);
+    if (!period?.startDate && Number(day) >= 28) {
+      fallbackYearMonth = addMonthIfNextDayFallsBack(fallbackYearMonth, day, rawCells[cells.length]?.text);
+    }
+  }
+
+  return cells;
+}
+
+export function findOlympicDateStatus(calendar, date) {
+  return calendar?.cells?.find((item) => item.date === date) || null;
+}
+
+function extractOlympicCellDay(text) {
+  const normalized = normalizeText(text);
+  const datePrefix = normalized.match(/^([0-3]?\d)\b/);
+  if (datePrefix) return datePrefix[1].padStart(2, "0");
+  const beforeStatus = normalized.match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*\d+\s*건)/);
+  return beforeStatus ? beforeStatus[1].padStart(2, "0") : null;
+}
+
 function parseStatusCount(text, label) {
   const match = text.match(new RegExp(`${label}\\s*(\\d+)\\s*건`));
   return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function normalizeText(text) {
+  return (text || "").replace(/\s+/g, " ").trim();
+}
+
+function toIsoDate(year, month, day) {
+  return [
+    String(year).padStart(4, "0"),
+    String(month).padStart(2, "0"),
+    String(day).padStart(2, "0")
+  ].join("-");
+}
+
+function dateFromYearMonthAndDay(yearMonth, day) {
+  const [year, month] = yearMonth.split("-").map(Number);
+  return toIsoDate(year, month, day);
+}
+
+function findNextDateForDay(startDate, endDate, day) {
+  const targetDay = Number(day);
+  let cursor = parseIsoDate(startDate);
+  const end = endDate ? parseIsoDate(endDate) : addDaysAsDate(cursor, 40);
+  while (cursor <= end) {
+    if (cursor.getUTCDate() === targetDay) return cursor.toISOString().slice(0, 10);
+    cursor = addDaysAsDate(cursor, 1);
+  }
+  return null;
+}
+
+function parseIsoDate(date) {
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function addDays(date, days) {
+  return addDaysAsDate(parseIsoDate(date), days).toISOString().slice(0, 10);
+}
+
+function addDaysAsDate(date, days) {
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addMonthIfNextDayFallsBack(yearMonth, currentDay, nextText) {
+  const nextDay = extractOlympicCellDay(nextText || "");
+  if (!nextDay || Number(nextDay) >= Number(currentDay)) return yearMonth;
+  const [year, month] = yearMonth.split("-").map(Number);
+  const next = new Date(Date.UTC(year, month, 1));
+  return next.toISOString().slice(0, 7);
 }
 
 function uniqueOlympicSlots(slots) {
