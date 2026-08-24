@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildCycleSummary, buildVenueDateTargets, findNotifications, groupActiveWatchesByVenue, keyFor, runCheckCycle } from "../src/monitor.js";
+import {
+  buildCycleSummary,
+  buildVenueDateTargets,
+  findNotifications,
+  groupActiveWatchesByVenue,
+  isProviderDue,
+  keyFor,
+  runCheckCycle
+} from "../src/monitor.js";
 import { CHECK_META } from "../src/checker.js";
 
 function state(overrides = {}) {
@@ -191,6 +199,32 @@ describe("runCheckCycle active watch targeting", () => {
     expect(checker).toHaveBeenCalledWith({ watches: state().watches, source: "scheduler" });
   });
 
+  it("does not call providers on scheduler ticks when inactive providers are due", async () => {
+    const current = state({
+      watches: [],
+      system: {
+        lastCheckedAt: null,
+        nextCheckAt: null,
+        venues: {},
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: false,
+            pollingMinutes: 5,
+            lastCheckedAt: "2026-08-24T09:00:00.000Z",
+            nextCheckAt: null
+          }
+        },
+        logs: []
+      }
+    });
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+
+    expect(runner.checker).not.toHaveBeenCalled();
+  });
+
   it("deduplicates a provider with multiple active watches", async () => {
     const watches = [
       { id: "w1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
@@ -270,6 +304,74 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
     expect(current.system.logs[0]).toContain("빈자리 1건 → 알림 1건");
+  });
+
+  it("does not check a provider before its polling interval is due", async () => {
+    const current = state({
+      system: {
+        lastCheckedAt: "2026-08-24T09:00:00.000Z",
+        nextCheckAt: "2026-08-24T09:05:00.000Z",
+        venues: {},
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: true,
+            pollingMinutes: 5,
+            lastCheckedAt: new Date(Date.now() - 60_000).toISOString(),
+            nextCheckAt: new Date(Date.now() + 4 * 60_000).toISOString()
+          }
+        },
+        logs: []
+      }
+    });
+    const runner = makeRunner(current);
+
+    const result = await runCheckCycle(runner);
+
+    expect(result.notDue).toBe(true);
+    expect(runner.checker).not.toHaveBeenCalled();
+  });
+
+  it("checks a provider after its polling interval is due", async () => {
+    const current = state({
+      system: {
+        lastCheckedAt: "2026-08-24T09:00:00.000Z",
+        nextCheckAt: "2026-08-24T09:05:00.000Z",
+        venues: {},
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: true,
+            pollingMinutes: 5,
+            lastCheckedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+            nextCheckAt: new Date(Date.now() - 60_000).toISOString()
+          }
+        },
+        logs: []
+      }
+    });
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isProviderDue", () => {
+  it("uses provider polling minutes to decide due state", () => {
+    const now = new Date("2026-08-24T09:05:00.000Z");
+
+    expect(isProviderDue({
+      id: "gangdong",
+      pollingMinutes: 5,
+      lastCheckedAt: "2026-08-24T09:00:00.000Z"
+    }, now)).toBe(true);
+    expect(isProviderDue({
+      id: "gangdong",
+      pollingMinutes: 7,
+      lastCheckedAt: "2026-08-24T09:00:00.000Z"
+    }, now)).toBe(false);
   });
 });
 

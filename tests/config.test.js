@@ -1,0 +1,75 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const ORIGINAL_ENV = { ...process.env };
+
+async function loadConfigWith(env) {
+  vi.resetModules();
+  process.env = { ...ORIGINAL_ENV, ...env };
+  for (const key of [
+    "CHECK_INTERVAL_MINUTES",
+    "GANGDONG_POLLING_MINUTES",
+    "SONGPA_POLLING_MINUTES",
+    "OLYMPIC_POLLING_MINUTES"
+  ]) {
+    if (env[key] === undefined) process.env[key] = "";
+  }
+  return import("../src/config.js");
+}
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+  vi.resetModules();
+});
+
+describe("provider polling minutes config", () => {
+  it("defaults all providers to 5 minutes without env vars", async () => {
+    const { config } = await loadConfigWith({});
+
+    expect(config.providerPollingMinutes).toEqual({
+      gangdong: 5,
+      songpa: 5,
+      olympic: 5
+    });
+  });
+
+  it("allows Gangdong to use its own polling minutes", async () => {
+    const { config } = await loadConfigWith({ GANGDONG_POLLING_MINUTES: "3" });
+
+    expect(config.providerPollingMinutes.gangdong).toBe(3);
+    expect(config.providerPollingMinutes.songpa).toBe(5);
+    expect(config.providerPollingMinutes.olympic).toBe(5);
+  });
+
+  it("allows Songpa to use its own polling minutes", async () => {
+    const { config } = await loadConfigWith({ SONGPA_POLLING_MINUTES: "7" });
+
+    expect(config.providerPollingMinutes.songpa).toBe(7);
+  });
+
+  it("allows Olympic to use its own polling minutes", async () => {
+    const { config } = await loadConfigWith({ OLYMPIC_POLLING_MINUTES: "10" });
+
+    expect(config.providerPollingMinutes.olympic).toBe(10);
+  });
+
+  it("falls back to 5 for zero and non-numeric values", async () => {
+    const { config } = await loadConfigWith({
+      GANGDONG_POLLING_MINUTES: "0",
+      SONGPA_POLLING_MINUTES: "abc"
+    });
+
+    expect(config.providerPollingMinutes.gangdong).toBe(5);
+    expect(config.providerPollingMinutes.songpa).toBe(5);
+  });
+
+  it("uses CHECK_INTERVAL_MINUTES only as a backward-compatible fallback", async () => {
+    const { config } = await loadConfigWith({
+      CHECK_INTERVAL_MINUTES: "8",
+      OLYMPIC_POLLING_MINUTES: "10"
+    });
+
+    expect(config.providerPollingMinutes.gangdong).toBe(8);
+    expect(config.providerPollingMinutes.songpa).toBe(8);
+    expect(config.providerPollingMinutes.olympic).toBe(10);
+  });
+});

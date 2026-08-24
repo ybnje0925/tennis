@@ -48,6 +48,12 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatProviderStatus(status, providerId, active) {
+  if (!active) return "미사용";
+  const provider = status.providers?.[providerId] || {};
+  return `감시 중 · ${formatDateTime(provider.lastCheckedAt)}→${formatDateTime(provider.nextCheckAt)}`;
+}
+
 function formatDate(value) {
   if (!value) return "";
   const date = new Date(`${value}T00:00:00`);
@@ -70,12 +76,12 @@ async function loadStatus() {
   const status = await request("/api/status");
   lastCheckedEl.textContent = formatDateTime(status.lastCheckedAt);
   nextCheckEl.textContent = formatDateTime(status.nextCheckAt);
-  gangilStatusEl.textContent = status.activeVenues?.gangil ? "감시 중" : "미사용";
-  myeongilStatusEl.textContent = status.activeVenues?.myeongil ? "감시 중" : "미사용";
-  olympicStatusEl.textContent = status.activeVenues?.olympic ? "감시 중" : "미사용";
-  songpaStatusEl.textContent = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id])
-    ? "감시 중"
-    : "미사용";
+  const gangdongActive = Boolean(status.activeVenues?.gangil || status.activeVenues?.myeongil);
+  const songpaActive = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id]);
+  gangilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
+  myeongilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
+  olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
+  songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   logsEl.innerHTML = (status.logs || []).length
     ? status.logs.slice().reverse().map((line) => `<div>${line}</div>`).join("")
     : `<p class="empty">아직 로그가 없습니다.</p>`;

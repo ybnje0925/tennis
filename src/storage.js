@@ -15,6 +15,7 @@ const initialState = {
     nextCheckAt: null,
     lastManualCheckAt: null,
     venues: {},
+    providers: {},
     logs: []
   }
 };
@@ -86,6 +87,7 @@ function normalizeState(raw) {
   state.lastAvailability = state.lastAvailability || {};
   state.sentNotifications = state.sentNotifications || {};
   state.system.venues = state.system.venues || {};
-  state.system.logs = Array.isArray(state.system.logs) ? state.system.logs.slice(-80) : [];
+  state.system.providers = state.system.providers || {};
+  state.system.logs = Array.isArray(state.system.logs) ? state.system.logs.slice(-30) : [];
   return state;
 }

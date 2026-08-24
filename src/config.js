@@ -10,6 +10,14 @@ const int = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+export function parsePollingMinutes(value, fallback = 5) {
+  if (value == null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
+}
+
+const fallbackPollingMinutes = parsePollingMinutes(process.env.CHECK_INTERVAL_MINUTES, 5);
+
 export const config = {
   gangdongUserId: process.env.GANGDONG_USER_ID || "",
   gangdongUserPassword: process.env.GANGDONG_USER_PASSWORD || "",
@@ -25,7 +33,12 @@ export const config = {
   enableOlympicProvider: bool(process.env.ENABLE_OLYMPIC_PROVIDER, true),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),
-  checkIntervalMinutes: int(process.env.CHECK_INTERVAL_MINUTES, 10)
+  checkIntervalMinutes: fallbackPollingMinutes,
+  providerPollingMinutes: {
+    gangdong: parsePollingMinutes(process.env.GANGDONG_POLLING_MINUTES, fallbackPollingMinutes),
+    songpa: parsePollingMinutes(process.env.SONGPA_POLLING_MINUTES, fallbackPollingMinutes),
+    olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, fallbackPollingMinutes)
+  }
 };
 
 export function assertLoginConfig() {

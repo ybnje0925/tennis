@@ -1,3 +1,5 @@
+import { config } from "./config.js";
+
 export const VENUES = {
   gangil: {
     id: "gangil",
@@ -60,7 +62,7 @@ export const PROVIDERS = {
     id: "gangdong",
     name: "강동구 테니스장",
     slotMinutes: 120,
-    pollingMinutes: 10,
+    pollingMinutes: config.providerPollingMinutes.gangdong,
     supportsCourtNumber: false,
     supportsContinuousSlots: false,
     venues: ["gangil", "myeongil"]
@@ -69,7 +71,7 @@ export const PROVIDERS = {
     id: "olympic",
     name: "올림픽공원 테니스장",
     slotMinutes: 60,
-    pollingMinutes: 10,
+    pollingMinutes: config.providerPollingMinutes.olympic,
     supportsCourtNumber: true,
     supportsContinuousSlots: false,
     courtTypes: ["indoor", "outdoor"]
@@ -78,7 +80,7 @@ export const PROVIDERS = {
     id: "songpa",
     name: "송파구시설관리공단",
     slotMinutes: 120,
-    pollingMinutes: 10,
+    pollingMinutes: config.providerPollingMinutes.songpa,
     supportsCourtNumber: false,
     supportsContinuousSlots: false,
     venues: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"]

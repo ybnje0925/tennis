@@ -29,6 +29,9 @@ TELEGRAM_CHAT_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
 CHECK_INTERVAL_MINUTES=10
+GANGDONG_POLLING_MINUTES=5
+SONGPA_POLLING_MINUTES=5
+OLYMPIC_POLLING_MINUTES=5
 ```
 
 ## 실행
@@ -49,7 +52,7 @@ npm run diagnose:songpa
 
 Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬 `diagnose:olympic`을 동시에 실행하지 마십시오. 올림픽공원 자동 감시가 필요 없는 로컬 개발환경에서는 `ENABLE_OLYMPIC_PROVIDER=false`로 두면 scheduler/manual 자동 조회에서 Olympic provider를 호출하지 않습니다. 단, `npm run diagnose:olympic`은 명시적인 진단 명령이므로 이 값과 별도로 실행할 수 있습니다.
 
-서버 실행 중에는 등록된 알림 조건을 기준으로 10분마다 자동 조회합니다. 같은 주기에 강일/명일 예약현황은 각각 1회만 조회하고, 가져온 결과를 모든 조건과 비교합니다.
+서버 실행 중에는 등록된 활성 알림 조건을 기준으로 provider별 조회주기에 맞춰 자동 조회합니다. 기본값은 강동, 송파, 올림픽 모두 5분입니다.
 
 ## 동작 방식
 
@@ -59,7 +62,7 @@ Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬
 4. 강일/명일 예약현황 페이지로 이동합니다.
 5. WebGate 보호 페이지나 로그인 페이지가 아닌 실제 예약현황 DOM인지 검사합니다.
 6. 날짜, 시간대, 예약가능 여부, 가능 코트 수를 표준 데이터로 정규화합니다.
-7. 10분마다 각 테니스장 현황을 1회씩 조회하고 저장된 알림 조건과 비교합니다.
+7. provider별 조회주기에 맞춰 각 테니스장 현황을 조회하고 저장된 알림 조건과 비교합니다.
 8. 예약완료에서 예약가능으로 바뀌었거나, 조건 등록 시 이미 예약가능이면 Telegram으로 1회 알림을 보냅니다.
 
 ## 데이터와 세션
@@ -136,8 +139,21 @@ HEADLESS=true
 ENABLE_TEST_TOOLS=false
 ENABLE_OLYMPIC_PROVIDER=true
 CHECK_INTERVAL_MINUTES=10
+GANGDONG_POLLING_MINUTES=5
+SONGPA_POLLING_MINUTES=5
+OLYMPIC_POLLING_MINUTES=5
 RAILWAY_RUN_UID=0
 ```
+
+조회주기는 Railway의 `tennis` 서비스 → `Variables`에서 provider별로 조정합니다.
+
+```env
+GANGDONG_POLLING_MINUTES=5
+SONGPA_POLLING_MINUTES=5
+OLYMPIC_POLLING_MINUTES=5
+```
+
+이후 조회주기를 변경하려면 코드를 수정하지 말고 Railway Variables에서 숫자만 변경합니다. 예: `OLYMPIC_POLLING_MINUTES=10`. 환경변수 수정 후 Railway 서비스가 재시작되면 새 값이 적용됩니다. provider 전용 변수가 없으면 기존 `CHECK_INTERVAL_MINUTES`를 fallback으로 사용하고, 둘 다 없거나 잘못된 값이면 기본 5분을 사용합니다.
 
 송파구시설관리공단 연동을 사용하려면 Railway Variables에 다음 값을 추가하세요.
 

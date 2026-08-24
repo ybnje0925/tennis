@@ -1,6 +1,6 @@
 import cron from "node-cron";
 import { config } from "./config.js";
-import { VENUES } from "./constants.js";
+import { PROVIDERS, VENUES } from "./constants.js";
 import { CHECK_META, checkAllVenues } from "./checker.js";
 import { buildNotificationMessage, sendTelegram } from "./telegram.js";
 import { loadState, saveState } from "./storage.js";
@@ -100,6 +100,72 @@ export function addLog(state, message, date = new Date()) {
   state.system.logs = state.system.logs.slice(-30);
 }
 
+export function activeProviderVenueIds(activeVenueIds) {
+  const result = new Map();
+  for (const venueId of activeVenueIds) {
+    const providerId = VENUES[venueId]?.provider;
+    if (!providerId) continue;
+    if (!result.has(providerId)) result.set(providerId, []);
+    result.get(providerId).push(venueId);
+  }
+  return result;
+}
+
+export function providerNextRunAt(lastCheckedAt, pollingMinutes) {
+  if (!lastCheckedAt) return null;
+  return new Date(Date.parse(lastCheckedAt) + pollingMinutes * 60_000).toISOString();
+}
+
+export function isProviderDue(providerState, now = new Date()) {
+  if (!providerState?.lastCheckedAt) return true;
+  const pollingMinutes = providerState.pollingMinutes || PROVIDERS[providerState.id]?.pollingMinutes || 5;
+  return Date.parse(providerState.lastCheckedAt) + pollingMinutes * 60_000 <= now.getTime();
+}
+
+export function filterWatchesToVenueIds(watches, venueIds) {
+  const allowed = new Set(venueIds);
+  return watches
+    .map((watch) => ({
+      ...watch,
+      venues: (watch.venues || []).filter((venueId) => allowed.has(venueId))
+    }))
+    .filter((watch) => watch.venues.length > 0);
+}
+
+export function syncProviderSchedule(state, activeProviderIds, now = new Date()) {
+  state.system.providers ||= {};
+  const active = new Set(activeProviderIds);
+
+  for (const providerId of Object.keys(PROVIDERS)) {
+    const previous = state.system.providers[providerId] || {};
+    const pollingMinutes = PROVIDERS[providerId].pollingMinutes;
+    const lastCheckedAt = previous.lastCheckedAt || null;
+    state.system.providers[providerId] = {
+      id: providerId,
+      pollingMinutes,
+      active: active.has(providerId),
+      lastCheckedAt,
+      nextCheckAt: active.has(providerId) ? providerNextRunAt(lastCheckedAt, pollingMinutes) || now.toISOString() : null
+    };
+  }
+
+  state.system.lastCheckedAt = latestProviderTime(state.system.providers, "lastCheckedAt");
+  state.system.nextCheckAt = earliestActiveProviderTime(state.system.providers);
+}
+
+function latestProviderTime(providers, key) {
+  const values = Object.values(providers || {}).map((item) => item[key]).filter(Boolean).sort();
+  return values.at(-1) || null;
+}
+
+function earliestActiveProviderTime(providers) {
+  const values = Object.values(providers || {})
+    .filter((item) => item.active && item.nextCheckAt)
+    .map((item) => item.nextCheckAt)
+    .sort();
+  return values[0] || null;
+}
+
 export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMinutes) {
   const next = new Date(date);
   const minutes = next.getMinutes();
@@ -117,41 +183,58 @@ export async function runCheckCycle({
   source = "scheduler"
 } = {}) {
   const state = await stateLoader();
+  state.system.providers ||= {};
   const activeWatches = getActiveWatches(state);
   const grouped = groupActiveWatchesByVenue(activeWatches);
   const venueDates = buildVenueDateTargets(grouped);
   const activeVenueIds = Object.keys(venueDates).filter((venueId) => (
     VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
   ));
+  const activeProviders = activeProviderVenueIds(activeVenueIds);
+  syncProviderSchedule(state, Array.from(activeProviders.keys()));
 
   if (activeWatches.length === 0 || activeVenueIds.length === 0) {
     const checkedAt = new Date().toISOString();
-    state.system.lastCheckedAt = checkedAt;
-    state.system.nextCheckAt = nextRunAt();
-    addLog(state, "No active alerts. Skipping all reservation checks.");
+    if (source !== "scheduler") {
+      state.system.lastCheckedAt = checkedAt;
+      addLog(state, "No active alerts. Skipping all reservation checks.");
+    }
     await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [], skipped: true };
+  }
+
+  let targetVenueIds = activeVenueIds;
+  let targetWatches = activeWatches;
+  if (source === "scheduler") {
+    targetVenueIds = activeVenueIds.filter((venueId) => {
+      const providerId = VENUES[venueId]?.provider;
+      return isProviderDue(state.system.providers[providerId]);
+    });
+    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
+    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
+      syncProviderSchedule(state, Array.from(activeProviders.keys()));
+      await stateSaver(state);
+      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
+    }
   }
 
   let checked;
   const errors = [];
   try {
     const checkedAt = new Date().toISOString();
-    state.system.lastCheckedAt = checkedAt;
-    state.system.nextCheckAt = nextRunAt();
     await stateSaver(state);
-    checked = await checker({ watches: activeWatches, source });
+    checked = await checker({ watches: targetWatches, source });
   } catch (error) {
     const checkedAt = new Date().toISOString();
-    state.system.lastCheckedAt = checkedAt;
-    state.system.nextCheckAt = nextRunAt();
     checked = {};
     Object.defineProperty(checked, CHECK_META, {
-      value: { errors: activeVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
+      value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
       enumerable: false,
       configurable: true
     });
-    addLog(state, buildCycleSummary({ checked, activeVenueIds, vacancyCount: 0, alertCount: 0 }));
+    updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
+    syncProviderSchedule(state, Array.from(activeProviders.keys()));
+    addLog(state, buildCycleSummary({ checked, activeVenueIds: targetVenueIds, vacancyCount: 0, alertCount: 0 }));
     await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
@@ -181,7 +264,7 @@ export async function runCheckCycle({
       console.error(`Telegram 알림 발송 실패: ${error.message}`);
     }
   }
-  addLog(state, buildCycleSummary({ checked, activeVenueIds, vacancyCount, alertCount }));
+  addLog(state, buildCycleSummary({ checked, activeVenueIds: targetVenueIds, vacancyCount, alertCount }));
 
   for (const item of reservations) {
     state.lastAvailability[keyFor(item)] = {
@@ -212,11 +295,22 @@ export async function runCheckCycle({
       checkedAt
     };
   }
-  await stateSaver(state);
-  state.system.lastCheckedAt = checkedAt;
-  state.system.nextCheckAt = nextRunAt();
+  updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
+  syncProviderSchedule(state, Array.from(activeProviders.keys()));
   await stateSaver(state);
   return { checkedAt, reservations, notifications, errors };
+}
+
+function updateCheckedProviderSchedule(state, venueIds, checkedAt) {
+  state.system.providers ||= {};
+  for (const providerId of activeProviderVenueIds(venueIds).keys()) {
+    state.system.providers[providerId] = {
+      ...(state.system.providers[providerId] || {}),
+      id: providerId,
+      pollingMinutes: PROVIDERS[providerId]?.pollingMinutes || 5,
+      lastCheckedAt: checkedAt
+    };
+  }
 }
 
 export function buildCycleSummary({ checked, activeVenueIds, vacancyCount, alertCount }) {
@@ -306,11 +400,15 @@ function normalizeOlympicWatch(watch) {
 }
 
 export function startScheduler() {
-  const minuteStep = Math.max(1, config.checkIntervalMinutes);
-  const expression = `*/${minuteStep} * * * *`;
+  const expression = "* * * * *";
   loadState()
     .then((state) => {
-      state.system.nextCheckAt = nextRunAt();
+      const activeWatches = getActiveWatches(state);
+      const grouped = groupActiveWatchesByVenue(activeWatches);
+      const activeVenueIds = Object.keys(buildVenueDateTargets(grouped)).filter((venueId) => (
+        VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
+      ));
+      syncProviderSchedule(state, Array.from(activeProviderVenueIds(activeVenueIds).keys()));
       return saveState(state);
     })
     .catch((error) => console.error(`Scheduler state update failed: ${error.message}`));
@@ -319,6 +417,7 @@ export function startScheduler() {
       console.error(`Check cycle failed: ${error.message}`);
     });
   });
-  console.log(`Scheduler started: every ${minuteStep} minutes for ${Object.keys(VENUES).length} venues.`);
+  console.log(`Scheduler started: provider polling due check every 1 minute.`);
+  console.log(`Polling | 강동 ${PROVIDERS.gangdong.pollingMinutes}분 | 송파 ${PROVIDERS.songpa.pollingMinutes}분 | 올림픽 ${PROVIDERS.olympic.pollingMinutes}분`);
   return task;
 }
