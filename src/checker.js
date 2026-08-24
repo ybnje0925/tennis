@@ -1,5 +1,5 @@
 import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
-import { VENUES } from "./constants.js";
+import { PROVIDERS, VENUES } from "./constants.js";
 import { config } from "./config.js";
 import { parseReservationDom } from "./parser.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
@@ -7,6 +7,7 @@ import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpa
 import { fileURLToPath } from "node:url";
 
 const providerLocks = new Map();
+export const CHECK_META = Symbol.for("tennis.checkMeta");
 
 export async function checkVenue(page, venueId, options = {}) {
   const venue = VENUES[venueId];
@@ -39,10 +40,16 @@ export async function checkGangdongVenues(venueIds, options = {}) {
     if (!loggedIn) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
 
     const result = {};
+    const errors = [];
     for (const venueId of ids) {
-      result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId] });
+      try {
+        result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId] });
+      } catch (error) {
+        errors.push({ provider: "gangdong", venueId, message: error.message });
+        console.warn(`강동: ${VENUES[venueId]?.name || venueId} 조회 실패`);
+      }
     }
-    return result;
+    return withCheckMeta(result, { errors });
   } finally {
     await context.close();
   }
@@ -60,20 +67,30 @@ export async function checkAllVenues(options = {}) {
 
   const result = {};
   const venueDates = buildVenueDateTargets(watches);
-  Object.assign(result, await runProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })));
-  Object.assign(result, await runProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches))));
+  const meta = { errors: [] };
+  const gangdong = await safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates }));
+  Object.assign(result, stripCheckMeta(gangdong));
+  meta.errors.push(...getCheckErrors(gangdong));
+
+  const songpa = await safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches)));
+  Object.assign(result, stripCheckMeta(songpa));
+  meta.errors.push(...getCheckErrors(songpa));
+
   const olympicWatches = watches.filter(isOlympicWatch);
   if (olympicWatches.length > 0 && config.enableOlympicProvider) {
-    const olympicResult = await runProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches));
+    const olympicResult = await safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches));
+    meta.errors.push(...getCheckErrors(olympicResult));
     if (olympicResult) result.olympic = olympicResult;
   }
-  return result;
+  return withCheckMeta(result, meta);
 }
 
 export async function runProviderCheck(providerId, fn) {
   if (providerLocks.has(providerId)) {
     console.debug(`${providerId} check already running; duplicate check skipped.`);
-    return providerId === "olympic" ? [] : {};
+    return withCheckMeta(providerId === "olympic" ? [] : {}, {
+      errors: [{ provider: providerId, message: "중복조회 생략" }]
+    });
   }
 
   const running = Promise.resolve().then(fn);
@@ -83,6 +100,36 @@ export async function runProviderCheck(providerId, fn) {
   } finally {
     if (providerLocks.get(providerId) === running) providerLocks.delete(providerId);
   }
+}
+
+async function safeProviderCheck(providerId, fn) {
+  try {
+    return await runProviderCheck(providerId, fn);
+  } catch (error) {
+    console.error(`${PROVIDERS[providerId]?.name || providerId} 조회 실패: ${error.message}`);
+    return withCheckMeta(providerId === "olympic" ? [] : {}, {
+      errors: [{ provider: providerId, message: error.message }]
+    });
+  }
+}
+
+function withCheckMeta(result, meta) {
+  Object.defineProperty(result, CHECK_META, {
+    value: meta,
+    enumerable: false,
+    configurable: true
+  });
+  return result;
+}
+
+function stripCheckMeta(result) {
+  if (!result || typeof result !== "object") return result;
+  const clone = Array.isArray(result) ? result.slice() : { ...result };
+  return clone;
+}
+
+function getCheckErrors(result) {
+  return result?.[CHECK_META]?.errors || [];
 }
 
 export function buildVenueDateTargets(watches) {

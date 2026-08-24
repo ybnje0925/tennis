@@ -5,6 +5,7 @@ import { config, assertOlympicLoginConfig } from "../config.js";
 import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
+const CHECK_META = Symbol.for("tennis.checkMeta");
 let olympicSessionPromise = null;
 let olympicSession = null;
 let olympicLoginPromise = null;
@@ -530,7 +531,15 @@ export async function checkOlympicByWatches(watches) {
     }
     return uniqueOlympicSlots(allSlots);
   } catch (error) {
-    if (error instanceof OlympicDuplicateSessionError) return [];
+    if (error instanceof OlympicDuplicateSessionError) {
+      const result = [];
+      Object.defineProperty(result, CHECK_META, {
+        value: { errors: [{ provider: "olympic", message: error.message }] },
+        enumerable: false,
+        configurable: true
+      });
+      return result;
+    }
     throw error;
   }
 }

@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { config } from "./config.js";
 import { VENUES } from "./constants.js";
-import { checkAllVenues } from "./checker.js";
+import { CHECK_META, checkAllVenues } from "./checker.js";
 import { buildNotificationMessage, sendTelegram } from "./telegram.js";
 import { loadState, saveState } from "./storage.js";
 import {
@@ -97,7 +97,7 @@ export function addLog(state, message, date = new Date()) {
     timeZone: "Asia/Seoul"
   }).format(date);
   state.system.logs.push(`[${time}] ${message}`);
-  state.system.logs = state.system.logs.slice(-80);
+  state.system.logs = state.system.logs.slice(-30);
 }
 
 export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMinutes) {
@@ -137,9 +137,6 @@ export async function runCheckCycle({
   const errors = [];
   try {
     const checkedAt = new Date().toISOString();
-    for (const venueId of activeVenueIds) {
-      addLog(state, `${VENUES[venueId]?.name || venueId} 조회 시작`);
-    }
     state.system.lastCheckedAt = checkedAt;
     state.system.nextCheckAt = nextRunAt();
     await stateSaver(state);
@@ -148,13 +145,20 @@ export async function runCheckCycle({
     const checkedAt = new Date().toISOString();
     state.system.lastCheckedAt = checkedAt;
     state.system.nextCheckAt = nextRunAt();
-    addLog(state, `예약현황 조회 실패: ${error.message}`);
+    checked = {};
+    Object.defineProperty(checked, CHECK_META, {
+      value: { errors: activeVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
+      enumerable: false,
+      configurable: true
+    });
+    addLog(state, buildCycleSummary({ checked, activeVenueIds, vacancyCount: 0, alertCount: 0 }));
     await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
 
   const reservations = Object.values(checked).flat();
   const notifications = findNotifications(state, reservations);
+  const vacancyCount = countMatchingAvailableItems(state, reservations);
 
   const checkedAt = new Date().toISOString();
   for (const venueId of Object.keys(checked)) {
@@ -164,23 +168,20 @@ export async function runCheckCycle({
       checkedAt,
       count
     };
-    addLog(state, `${VENUES[venueId].name} 조회 ${count > 0 ? "성공" : "결과 없음"}`);
   }
 
+  let alertCount = 0;
   for (const notification of notifications) {
     try {
       await notifier(buildNotificationMessage(notification.item));
       state.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
-      addLog(
-        state,
-        `${notification.item.time} 예약가능 ${notification.item.availableCount}개 감지, Telegram 알림 발송 성공`
-      );
+      alertCount += 1;
     } catch (error) {
       errors.push(error.message);
-      addLog(state, `Telegram 알림 발송 실패: ${error.message}`);
+      console.error(`Telegram 알림 발송 실패: ${error.message}`);
     }
   }
-  if (notifications.length === 0) addLog(state, "빈자리 알림 대상 없음");
+  addLog(state, buildCycleSummary({ checked, activeVenueIds, vacancyCount, alertCount }));
 
   for (const item of reservations) {
     state.lastAvailability[keyFor(item)] = {
@@ -216,6 +217,83 @@ export async function runCheckCycle({
   state.system.nextCheckAt = nextRunAt();
   await stateSaver(state);
   return { checkedAt, reservations, notifications, errors };
+}
+
+export function buildCycleSummary({ checked, activeVenueIds, vacancyCount, alertCount }) {
+  const parts = ["조회완료"];
+  const activeProviders = providerTargets(activeVenueIds);
+  const checkErrors = checked?.[CHECK_META]?.errors || [];
+
+  for (const providerId of ["gangdong", "songpa", "olympic"]) {
+    if (!activeProviders.has(providerId)) continue;
+    parts.push(providerSummary(providerId, activeProviders.get(providerId), checked, checkErrors));
+  }
+
+  const tail = [`빈자리 ${vacancyCount}건`];
+  if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
+  parts.push(tail.join(" → "));
+  return parts.join(" | ");
+}
+
+function providerTargets(activeVenueIds) {
+  const targets = new Map();
+  for (const venueId of activeVenueIds) {
+    const providerId = VENUES[venueId]?.provider;
+    if (!providerId) continue;
+    if (!targets.has(providerId)) targets.set(providerId, []);
+    targets.get(providerId).push(venueId);
+  }
+  return targets;
+}
+
+function providerSummary(providerId, venueIds, checked, errors) {
+  const providerErrors = errors.filter((error) => error.provider === providerId);
+  if (providerId === "olympic") {
+    if (providerErrors.length > 0 || !Object.prototype.hasOwnProperty.call(checked, "olympic")) {
+      return `올림픽✕(${shortReason(providerErrors[0]?.message)})`;
+    }
+    return "올림픽✓";
+  }
+
+  const label = providerId === "gangdong" ? "강동" : "송파";
+  const failedVenueIds = new Set(providerErrors.map((error) => error.venueId).filter(Boolean));
+  const successCount = venueIds.filter((venueId) => (
+    Object.prototype.hasOwnProperty.call(checked, venueId) && !failedVenueIds.has(venueId)
+  )).length;
+  const mark = successCount === venueIds.length ? "✓" : successCount > 0 ? "△" : `✕(${shortReason(providerErrors[0]?.message)})`;
+  return `${label} ${successCount}/${venueIds.length}${mark}`;
+}
+
+function shortReason(message = "조회 실패") {
+  if (/date selector|날짜/.test(message)) return "날짜조회 실패";
+  if (/login|로그인/i.test(message)) return "로그인 실패";
+  if (/중복|duplicate/i.test(message)) return "중복접속";
+  return "조회 실패";
+}
+
+export function countMatchingAvailableItems(state, reservations) {
+  const matches = new Set();
+  const olympicSlots = reservations.filter((item) => item.provider === "olympic");
+  const byKey = new Map(reservations.map((item) => [keyFor(item), item]));
+
+  for (const watch of getActiveWatches(state)) {
+    if (isOlympicWatch(watch)) {
+      for (const item of filterOlympicSlotsByWatch(olympicSlots, normalizeOlympicWatch(watch))) {
+        matches.add(keyFor(item));
+      }
+      continue;
+    }
+
+    for (const venue of watch.venues || []) {
+      for (const time of watch.times || []) {
+        const key = `${venue}|${watch.date}|${time}`;
+        const item = byKey.get(key);
+        if (item?.available) matches.add(key);
+      }
+    }
+  }
+
+  return matches.size;
 }
 
 function normalizeOlympicWatch(watch) {

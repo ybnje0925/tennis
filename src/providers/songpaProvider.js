@@ -5,6 +5,7 @@ import { config, assertSongpaLoginConfig } from "../config.js";
 import { PROVIDERS, SONGPA_LOGIN_URL, TIME_SLOTS, VENUES } from "../constants.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "songpa-profile");
+const CHECK_META = Symbol.for("tennis.checkMeta");
 
 export const songpaProvider = {
   ...PROVIDERS.songpa,
@@ -72,9 +73,20 @@ export async function checkSongpaVenues(venueIds) {
     if (!loggedIn) throw new Error("송파구 로그인 완료 여부를 확인하지 못했습니다.");
 
     const result = {};
+    const errors = [];
     for (const venueId of ids) {
-      result[venueId] = await checkSongpaVenue(page, venueId);
+      try {
+        result[venueId] = await checkSongpaVenue(page, venueId);
+      } catch (error) {
+        errors.push({ provider: "songpa", venueId, message: error.message });
+        console.warn(`송파: ${VENUES[venueId]?.name || venueId} 조회 실패`);
+      }
     }
+    Object.defineProperty(result, CHECK_META, {
+      value: { errors },
+      enumerable: false,
+      configurable: true
+    });
     return result;
   } finally {
     await context.close();

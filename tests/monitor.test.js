@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildVenueDateTargets, findNotifications, groupActiveWatchesByVenue, keyFor, runCheckCycle } from "../src/monitor.js";
+import { buildCycleSummary, buildVenueDateTargets, findNotifications, groupActiveWatchesByVenue, keyFor, runCheckCycle } from "../src/monitor.js";
+import { CHECK_META } from "../src/checker.js";
 
 function state(overrides = {}) {
   return {
@@ -243,5 +244,84 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle(runner);
 
     expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes one summary UI log per successful cycle", async () => {
+    const current = state();
+    const checker = vi.fn(async () => ({
+      gangil: [slot({ available: false, availableCount: 0 })]
+    }));
+    const notifier = vi.fn();
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier });
+
+    expect(current.system.logs).toHaveLength(1);
+    expect(current.system.logs[0]).toContain("조회완료 | 강동 1/1✓ | 빈자리 0건");
+    expect(current.system.logs[0]).not.toContain("결과 없음");
+  });
+
+  it("summarizes vacancies and sent alerts separately", async () => {
+    const current = state();
+    const checker = vi.fn(async () => ({
+      gangil: [slot()]
+    }));
+    const notifier = vi.fn(async () => {});
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier });
+
+    expect(current.system.logs[0]).toContain("빈자리 1건 → 알림 1건");
+  });
+});
+
+describe("buildCycleSummary", () => {
+  it("formats all-provider success in one line", () => {
+    expect(buildCycleSummary({
+      checked: {
+        gangil: [],
+        myeongil: [],
+        "songpa-oryun": [],
+        "songpa-seongnaecheon": [],
+        "songpa-songpa": [],
+        "songpa-ogeum": [],
+        olympic: []
+      },
+      activeVenueIds: ["gangil", "myeongil", "songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum", "olympic"],
+      vacancyCount: 0,
+      alertCount: 0
+    })).toBe("조회완료 | 강동 2/2✓ | 송파 4/4✓ | 올림픽✓ | 빈자리 0건");
+  });
+
+  it("formats partial Songpa success", () => {
+    const checked = {
+      "songpa-oryun": [],
+      "songpa-seongnaecheon": [],
+      "songpa-songpa": []
+    };
+    Object.defineProperty(checked, CHECK_META, {
+      value: { errors: [{ provider: "songpa", venueId: "songpa-ogeum", message: "DOM parse failed" }] },
+      enumerable: false
+    });
+
+    expect(buildCycleSummary({
+      checked,
+      activeVenueIds: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"],
+      vacancyCount: 0,
+      alertCount: 0
+    })).toBe("조회완료 | 송파 3/4△ | 빈자리 0건");
+  });
+
+  it("formats Olympic failure with a short reason", () => {
+    const checked = {};
+    Object.defineProperty(checked, CHECK_META, {
+      value: { errors: [{ provider: "olympic", message: "Olympic date selector not found for 2026-08-29" }] },
+      enumerable: false
+    });
+
+    expect(buildCycleSummary({
+      checked,
+      activeVenueIds: ["olympic"],
+      vacancyCount: 0,
+      alertCount: 0
+    })).toBe("조회완료 | 올림픽✕(날짜조회 실패) | 빈자리 0건");
   });
 });
