@@ -100,6 +100,48 @@ label {
   min-height: 36px;
 }
 
+.venue-groups {
+  display: grid;
+  gap: 18px;
+}
+
+.venue-group {
+  display: grid;
+  gap: 6px;
+}
+
+.venue-group-title {
+  margin-bottom: 2px;
+  color: #617064;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.venue-option {
+  justify-content: flex-start;
+}
+
+.venue-option input:disabled + .venue-name,
+.venue-option input:disabled ~ .venue-unit {
+  color: #9ba79e;
+}
+
+.venue-name {
+  min-width: 0;
+}
+
+.venue-unit {
+  color: #617064;
+  font-size: 13px;
+}
+
+.venue-help {
+  min-height: 20px;
+  margin: 10px 0 0;
+  color: #7a6551;
+  font-size: 13px;
+}
+
 input[type="date"] {
   width: 100%;
   height: 44px;
@@ -228,4 +270,5 @@ button.primary {
   .status-panel {
     grid-template-columns: 1fr;
   }
+
 }

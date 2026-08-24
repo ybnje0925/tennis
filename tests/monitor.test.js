@@ -88,4 +88,57 @@ describe("findNotifications", () => {
     expect(findNotifications(state({ watches: [] }), [slot()])).toHaveLength(0);
     expect(findNotifications(state({ watches: [{ ...state().watches[0], enabled: false }] }), [slot()])).toHaveLength(0);
   });
+
+  it("notifies Olympic availability once while it stays open", () => {
+    const item = olympicSlot();
+    const current = olympicState();
+    const first = findNotifications(current, [item]);
+    expect(first).toHaveLength(1);
+
+    current.lastAvailability[first[0].key] = { available: true };
+    current.sentNotifications[`w1|${first[0].key}`] = "2026-08-22T00:00:00.000Z";
+    expect(findNotifications(current, [item])).toHaveLength(0);
+  });
+
+  it("renotifies Olympic availability after it closes and reopens", () => {
+    const item = olympicSlot();
+    const current = olympicState();
+    const key = "olympic|outdoor|3|2026-08-29|18:00|19:00";
+    current.lastAvailability[key] = { available: true };
+    current.sentNotifications[`w1|${key}`] = "2026-08-22T00:00:00.000Z";
+
+    expect(findNotifications(current, [])).toHaveLength(0);
+    expect(current.lastAvailability[key].available).toBe(false);
+    expect(findNotifications(current, [item])).toHaveLength(1);
+  });
 });
+
+function olympicState() {
+  return state({
+    watches: [{
+      id: "w1",
+      provider: "olympic",
+      venues: ["olympic"],
+      date: "2026-08-29",
+      times: ["18:00~19:00"],
+      enabled: true
+    }]
+  });
+}
+
+function olympicSlot() {
+  return {
+    provider: "olympic",
+    venue: "olympic",
+    venueName: "올림픽공원 테니스장",
+    courtType: "outdoor",
+    courtTypeName: "실외",
+    courtNo: "3",
+    date: "2026-08-29",
+    startTime: "18:00",
+    endTime: "19:00",
+    time: "18:00~19:00",
+    durationMinutes: 60,
+    available: true
+  };
+}

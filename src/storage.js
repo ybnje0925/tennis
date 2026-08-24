@@ -39,7 +39,9 @@ export async function addWatch(input) {
   const state = await loadState();
   const watch = {
     id: crypto.randomUUID(),
+    provider: input.provider,
     venues: input.venues,
+    venue: input.venue,
     date: input.date,
     times: input.times,
     enabled: true,

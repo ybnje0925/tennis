@@ -67,7 +67,7 @@ export async function runHeadlessDiagnosis() {
 
     const venues = {};
     if (loginSucceeded) {
-      for (const venueId of Object.keys(VENUES)) {
+      for (const venueId of Object.keys(VENUES).filter((id) => VENUES[id].provider !== "olympic")) {
         venues[venueId] = await diagnoseVenue(page, venueId);
       }
     }

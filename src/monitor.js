@@ -4,8 +4,14 @@ import { VENUES } from "./constants.js";
 import { checkAllVenues } from "./checker.js";
 import { buildNotificationMessage, sendTelegram } from "./telegram.js";
 import { loadState, saveState } from "./storage.js";
+import {
+  filterOlympicSlotsByWatch,
+  isOlympicWatch,
+  olympicKeyFor
+} from "./providers/olympicProvider.js";
 
 export function keyFor(item) {
+  if (item.provider === "olympic") return olympicKeyFor(item);
   return `${item.venue}|${item.date}|${item.time}`;
 }
 
@@ -15,10 +21,32 @@ function availabilityValue(value) {
 }
 
 export function findNotifications(state, reservations) {
+  const olympicSlots = reservations.filter((item) => item.provider === "olympic");
   const byKey = new Map(reservations.map((item) => [keyFor(item), item]));
   const notifications = [];
 
   for (const watch of state.watches.filter((item) => item.enabled !== false)) {
+    if (isOlympicWatch(watch)) {
+      const matches = filterOlympicSlotsByWatch(olympicSlots, normalizeOlympicWatch(watch));
+      const currentKeys = new Set(matches.map(keyFor));
+      for (const sentKey of Object.keys(state.sentNotifications || {})) {
+        if (!sentKey.startsWith(`${watch.id}|`)) continue;
+        const key = sentKey.slice(`${watch.id}|`.length);
+        if (key.startsWith("olympic|") && !currentKeys.has(key)) {
+          state.lastAvailability[key] = { available: false };
+        }
+      }
+
+      for (const item of matches) {
+        const key = keyFor(item);
+        const previous = availabilityValue(state.lastAvailability[key]);
+        const wasUnavailable = previous !== true;
+        const alreadySent = state.sentNotifications[`${watch.id}|${key}`];
+        if (wasUnavailable || !alreadySent) notifications.push({ watch, item, key });
+      }
+      continue;
+    }
+
     for (const venue of watch.venues) {
       for (const time of watch.times) {
         const key = `${venue}|${watch.date}|${time}`;
@@ -71,7 +99,7 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
   let checked;
   const errors = [];
   try {
-    checked = await checker();
+    checked = await checker({ watches: enabledWatches });
   } catch (error) {
     const checkedAt = new Date().toISOString();
     state.system.lastCheckedAt = checkedAt;
@@ -85,7 +113,7 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
   const notifications = forceCheck && enabledWatches.length === 0 ? [] : findNotifications(state, reservations);
 
   const checkedAt = new Date().toISOString();
-  for (const venueId of Object.keys(VENUES)) {
+  for (const venueId of Object.keys(checked)) {
     const count = checked[venueId]?.length ?? 0;
     state.system.venues[venueId] = {
       ok: count > 0,
@@ -112,11 +140,30 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
 
   for (const item of reservations) {
     state.lastAvailability[keyFor(item)] = {
+      provider: item.provider,
       venue: item.venue,
+      courtType: item.courtType,
+      courtNo: item.courtNo,
       date: item.date,
       time: item.time,
+      startTime: item.startTime,
+      endTime: item.endTime,
       available: item.available,
       availableCount: item.availableCount,
+      checkedAt
+    };
+  }
+  for (const notification of notifications) {
+    state.lastAvailability[notification.key] = {
+      provider: notification.item.provider,
+      venue: notification.item.venue,
+      courtType: notification.item.courtType,
+      courtNo: notification.item.courtNo,
+      date: notification.item.date,
+      time: notification.item.time,
+      startTime: notification.item.startTime,
+      endTime: notification.item.endTime,
+      available: true,
       checkedAt
     };
   }
@@ -125,6 +172,15 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
   state.system.nextCheckAt = nextRunAt();
   await saveState(state);
   return { checkedAt, reservations, notifications, errors };
+}
+
+function normalizeOlympicWatch(watch) {
+  return {
+    ...watch,
+    provider: "olympic",
+    venue: "olympic",
+    times: watch.times || [],
+  };
 }
 
 export function startScheduler() {

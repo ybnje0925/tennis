@@ -30,13 +30,21 @@
           <span>명일</span>
           <strong id="myeongilStatus">대기 중</strong>
         </div>
+        <div>
+          <span>올림픽</span>
+          <strong id="olympicStatus">대기 중</strong>
+        </div>
+        <div>
+          <span>송파</span>
+          <strong id="songpaStatus">대기 중</strong>
+        </div>
       </section>
 
       <form id="watchForm" class="panel">
         <fieldset>
           <legend>테니스장</legend>
-          <label><input type="checkbox" name="venues" value="gangil" /> 강일테니스장</label>
-          <label><input type="checkbox" name="venues" value="myeongil" /> 명일테니스장</label>
+          <div id="venueGroups" class="venue-groups"></div>
+          <p id="venueSelectionHelp" class="venue-help"></p>
         </fieldset>
 
         <label class="date-field">
@@ -45,7 +53,7 @@
         </label>
 
         <fieldset>
-          <legend>시간대</legend>
+          <legend id="timeSlotsLegend">시간대</legend>
           <div id="timeSlots" class="slot-grid"></div>
         </fieldset>
 

@@ -10,6 +10,8 @@
     "check": "node src/checker.js",
     "diagnose": "node src/diagnose.js",
     "diagnose:headless": "node src/headlessDiagnose.js",
+    "diagnose:olympic": "node src/diagnoseOlympic.js",
+    "diagnose:songpa": "node src/diagnoseSongpa.js",
     "telegram:test": "node src/telegramTest.js",
     "alert:test": "node src/alertTest.js",
     "alert:test:mock": "node src/alertTest.js --mock",

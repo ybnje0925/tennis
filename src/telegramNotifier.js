@@ -89,9 +89,14 @@ export function buildTelegramTestMessage() {
 }
 
 export function buildAvailabilityMessage(item) {
+  if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);
+
   const venue = VENUES[item.venue];
   const month = Number(item.date.slice(5, 7));
   const day = Number(item.date.slice(8, 10));
+  const countLine = Number.isFinite(item.availableCount)
+    ? `${item.provider === "songpa" ? "예약 가능 코트" : "현재 예약 가능 코트"}: ${item.availableCount}개`
+    : null;
 
   return [
     "🎾 테니스 잡아줘",
@@ -101,10 +106,28 @@ export function buildAvailabilityMessage(item) {
     `${month}월 ${day}일`,
     item.time,
     "",
-    `현재 예약 가능 코트: ${item.availableCount}개`,
+    countLine,
     "",
     "지금 예약사이트를 확인하세요.",
     venue?.url ?? ""
+  ].filter(Boolean).join("\n");
+}
+
+export function buildOlympicAvailabilityMessage(item) {
+  const venue = VENUES.olympic;
+  const month = Number(item.date.slice(5, 7));
+  const day = Number(item.date.slice(8, 10));
+  return [
+    "🎾 테니스 잡아줘",
+    "",
+    "올림픽공원 테니스장 빈자리!",
+    "",
+    `${item.courtNo}번 코트`,
+    `${month}월 ${day}일`,
+    `${item.startTime}~${item.endTime}`,
+    "",
+    "예약 가능합니다.",
+    venue.url
   ].filter(Boolean).join("\n");
 }
 
