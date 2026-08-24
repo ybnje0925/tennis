@@ -11,6 +11,12 @@ const gangilStatusEl = document.querySelector("#gangilStatus");
 const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
 const songpaStatusEl = document.querySelector("#songpaStatus");
+const reservationLinks = {
+  gangil: document.querySelector("#gangilLink"),
+  myeongil: document.querySelector("#myeongilLink"),
+  olympic: document.querySelector("#olympicLink"),
+  songpa: document.querySelector("#songpaLink")
+};
 const checkNowButton = document.querySelector("#checkNow");
 const venueGroupsEl = document.querySelector("#venueGroups");
 const venueSelectionHelpEl = document.querySelector("#venueSelectionHelp");
@@ -19,6 +25,8 @@ let olympicTimeSlots = [];
 let venueGroups = { twoHour: [], oneHour: [] };
 let venueOptions = [];
 let venueNames = {};
+let venuePublicUrls = {};
+let providerPublicUrls = {};
 
 async function request(path, options) {
   const response = await fetch(path, {
@@ -67,9 +75,41 @@ async function loadOptions() {
   venueGroups = options.venueGroups;
   venueOptions = options.venues;
   venueNames = Object.fromEntries(venueOptions.map((venue) => [venue.id, venue.name]));
+  venuePublicUrls = Object.fromEntries(venueOptions.map((venue) => [venue.id, venue.publicUrl]));
+  providerPublicUrls = Object.fromEntries(Object.values(options.providers || {}).map((provider) => [provider.id, provider.publicUrl]));
+  updateReservationLinks();
   renderVenueGroups();
   renderTimeSlots(gangdongTimeSlots);
   testToolsEl.classList.toggle("hidden", !options.enableTestTools);
+}
+
+function updateReservationLinks() {
+  const links = {
+    gangil: venuePublicUrls.gangil,
+    myeongil: venuePublicUrls.myeongil,
+    olympic: venuePublicUrls.olympic,
+    songpa: providerPublicUrls.songpa
+  };
+
+  for (const [id, url] of Object.entries(links)) {
+    const link = reservationLinks[id];
+    if (!link || !isPublicHttpUrl(url)) {
+      link.removeAttribute("href");
+      link.classList.add("hidden");
+      continue;
+    }
+    link.href = url;
+    link.classList.remove("hidden");
+  }
+}
+
+function isPublicHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 async function loadStatus() {

@@ -5,6 +5,7 @@ export const VENUES = {
     id: "gangil",
     name: "강일테니스장",
     url: "https://gdgd.igangdong.or.kr/page/rent/s01.od.list.php",
+    publicUrl: "https://gdgd.igangdong.or.kr/page/rent/s01.od.list.php",
     provider: "gangdong",
     slotMinutes: 120
   },
@@ -12,6 +13,7 @@ export const VENUES = {
     id: "myeongil",
     name: "명일테니스장",
     url: "https://gdgd.igangdong.or.kr/page/rent/s02.od.list.php",
+    publicUrl: "https://gdgd.igangdong.or.kr/page/rent/s02.od.list.php",
     provider: "gangdong",
     slotMinutes: 120
   },
@@ -19,6 +21,7 @@ export const VENUES = {
     id: "songpa-oryun",
     name: "오륜테니스장",
     url: "https://spc.esongpa.or.kr/page/rent/s04.od.list.php",
+    publicUrl: "https://spc.esongpa.or.kr/page/rent/s04.od.list.php",
     provider: "songpa",
     slotMinutes: 120
   },
@@ -26,6 +29,7 @@ export const VENUES = {
     id: "songpa-seongnaecheon",
     name: "성내천테니스장",
     url: "https://spc.esongpa.or.kr/page/rent/s06.od.list.php",
+    publicUrl: "https://spc.esongpa.or.kr/page/rent/s06.od.list.php",
     provider: "songpa",
     slotMinutes: 120
   },
@@ -33,6 +37,7 @@ export const VENUES = {
     id: "songpa-songpa",
     name: "송파테니스장",
     url: "https://spc.esongpa.or.kr/page/rent/s05.od.list.php",
+    publicUrl: "https://spc.esongpa.or.kr/page/rent/s05.od.list.php",
     provider: "songpa",
     slotMinutes: 120
   },
@@ -40,6 +45,7 @@ export const VENUES = {
     id: "songpa-ogeum",
     name: "오금공원테니스장",
     url: "https://spc.esongpa.or.kr/page/rent/s03.od.list.php",
+    publicUrl: "https://spc.esongpa.or.kr/page/rent/s03.od.list.php",
     provider: "songpa",
     slotMinutes: 120
   },
@@ -47,6 +53,7 @@ export const VENUES = {
     id: "olympic",
     name: "올림픽공원 테니스장",
     url: "https://www.ksponco.or.kr/online/tennis/index.do",
+    publicUrl: "https://www.ksponco.or.kr/online/tennis/index.do",
     provider: "olympic",
     slotMinutes: 60
   }
@@ -63,6 +70,7 @@ export const PROVIDERS = {
     name: "강동구 테니스장",
     slotMinutes: 120,
     pollingMinutes: config.providerPollingMinutes.gangdong,
+    publicUrl: "https://gdgd.igangdong.or.kr/",
     supportsCourtNumber: false,
     supportsContinuousSlots: false,
     venues: ["gangil", "myeongil"]
@@ -72,6 +80,7 @@ export const PROVIDERS = {
     name: "올림픽공원 테니스장",
     slotMinutes: 60,
     pollingMinutes: config.providerPollingMinutes.olympic,
+    publicUrl: "https://www.ksponco.or.kr/online/tennis/index.do",
     supportsCourtNumber: true,
     supportsContinuousSlots: false,
     courtTypes: ["indoor", "outdoor"]
@@ -81,6 +90,7 @@ export const PROVIDERS = {
     name: "송파구시설관리공단",
     slotMinutes: 120,
     pollingMinutes: config.providerPollingMinutes.songpa,
+    publicUrl: "https://spc.esongpa.or.kr/",
     supportsCourtNumber: false,
     supportsContinuousSlots: false,
     venues: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"]

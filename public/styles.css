@@ -80,6 +80,22 @@ h2 {
   letter-spacing: 0;
 }
 
+.reservation-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin-top: 6px;
+  color: #237a3b;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.reservation-link:hover,
+.reservation-link:focus-visible {
+  text-decoration: underline;
+}
+
 fieldset {
   border: 0;
   padding: 0;

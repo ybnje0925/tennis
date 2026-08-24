@@ -25,10 +25,10 @@ app.get("/health", (req, res) => {
 
 app.get("/api/options", (req, res) => {
   res.json({
-    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes }) => ({ id, name, provider, slotMinutes })),
+    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl }) => ({ id, name, provider, slotMinutes, publicUrl })),
     venueGroups: {
-      twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes }) => ({ id, name, slotMinutes })),
-      oneHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 60).map(({ id, name, slotMinutes }) => ({ id, name, slotMinutes }))
+      twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl })),
+      oneHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 60).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl }))
     },
     providers: PROVIDERS,
     timeSlots: TIME_SLOTS,
