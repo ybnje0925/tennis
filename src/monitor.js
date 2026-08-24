@@ -20,12 +20,37 @@ function availabilityValue(value) {
   return Boolean(value?.available);
 }
 
+export function getActiveWatches(state) {
+  return state.watches.filter((watch) => watch.enabled === true);
+}
+
+export function groupActiveWatchesByVenue(watches) {
+  const grouped = Object.fromEntries(Object.keys(VENUES).map((venueId) => [venueId, []]));
+
+  for (const watch of watches) {
+    for (const venueId of watch.venues || []) {
+      if (!grouped[venueId]) grouped[venueId] = [];
+      grouped[venueId].push(watch);
+    }
+  }
+
+  return grouped;
+}
+
+export function buildVenueDateTargets(grouped) {
+  return Object.fromEntries(
+    Object.entries(grouped)
+      .map(([venueId, watches]) => [venueId, Array.from(new Set(watches.map((watch) => watch.date))).sort()])
+      .filter(([, dates]) => dates.length > 0)
+  );
+}
+
 export function findNotifications(state, reservations) {
   const olympicSlots = reservations.filter((item) => item.provider === "olympic");
   const byKey = new Map(reservations.map((item) => [keyFor(item), item]));
   const notifications = [];
 
-  for (const watch of state.watches.filter((item) => item.enabled !== false)) {
+  for (const watch of getActiveWatches(state)) {
     if (isOlympicWatch(watch)) {
       const matches = filterOlympicSlotsByWatch(olympicSlots, normalizeOlympicWatch(watch));
       const currentKeys = new Set(matches.map(keyFor));
@@ -84,33 +109,52 @@ export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMi
   return next.toISOString();
 }
 
-export async function runCheckCycle({ checker = checkAllVenues, notifier = sendTelegram, forceCheck = false } = {}) {
-  const state = await loadState();
-  const enabledWatches = state.watches.filter((watch) => watch.enabled !== false);
-  if (enabledWatches.length === 0 && !forceCheck) {
+export async function runCheckCycle({
+  checker = checkAllVenues,
+  notifier = sendTelegram,
+  stateLoader = loadState,
+  stateSaver = saveState,
+  source = "scheduler"
+} = {}) {
+  const state = await stateLoader();
+  const activeWatches = getActiveWatches(state);
+  const grouped = groupActiveWatchesByVenue(activeWatches);
+  const venueDates = buildVenueDateTargets(grouped);
+  const activeVenueIds = Object.keys(venueDates).filter((venueId) => (
+    VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
+  ));
+
+  if (activeWatches.length === 0 || activeVenueIds.length === 0) {
     const checkedAt = new Date().toISOString();
     state.system.lastCheckedAt = checkedAt;
     state.system.nextCheckAt = nextRunAt();
-    addLog(state, "등록된 활성 알림 조건이 없어 조회를 건너뜀");
-    await saveState(state);
-    return { checkedAt, reservations: [], notifications: [], errors: [] };
+    addLog(state, "No active alerts. Skipping all reservation checks.");
+    await stateSaver(state);
+    return { checkedAt, reservations: [], notifications: [], errors: [], skipped: true };
   }
 
   let checked;
   const errors = [];
   try {
-    checked = await checker({ watches: enabledWatches });
+    const checkedAt = new Date().toISOString();
+    for (const venueId of activeVenueIds) {
+      addLog(state, `${VENUES[venueId]?.name || venueId} 조회 시작`);
+    }
+    state.system.lastCheckedAt = checkedAt;
+    state.system.nextCheckAt = nextRunAt();
+    await stateSaver(state);
+    checked = await checker({ watches: activeWatches, source });
   } catch (error) {
     const checkedAt = new Date().toISOString();
     state.system.lastCheckedAt = checkedAt;
     state.system.nextCheckAt = nextRunAt();
     addLog(state, `예약현황 조회 실패: ${error.message}`);
-    await saveState(state);
+    await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
 
   const reservations = Object.values(checked).flat();
-  const notifications = forceCheck && enabledWatches.length === 0 ? [] : findNotifications(state, reservations);
+  const notifications = findNotifications(state, reservations);
 
   const checkedAt = new Date().toISOString();
   for (const venueId of Object.keys(checked)) {
@@ -167,10 +211,10 @@ export async function runCheckCycle({ checker = checkAllVenues, notifier = sendT
       checkedAt
     };
   }
-  await saveState(state);
+  await stateSaver(state);
   state.system.lastCheckedAt = checkedAt;
   state.system.nextCheckAt = nextRunAt();
-  await saveState(state);
+  await stateSaver(state);
   return { checkedAt, reservations, notifications, errors };
 }
 

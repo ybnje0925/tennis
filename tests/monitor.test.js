@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { findNotifications, keyFor } from "../src/monitor.js";
+import { describe, expect, it, vi } from "vitest";
+import { buildVenueDateTargets, findNotifications, groupActiveWatchesByVenue, keyFor, runCheckCycle } from "../src/monitor.js";
 
 function state(overrides = {}) {
   return {
@@ -14,6 +14,12 @@ function state(overrides = {}) {
     ],
     lastAvailability: {},
     sentNotifications: {},
+    system: {
+      lastCheckedAt: null,
+      nextCheckAt: null,
+      venues: {},
+      logs: []
+    },
     ...overrides
   };
 }
@@ -142,3 +148,100 @@ function olympicSlot() {
     available: true
   };
 }
+
+describe("runCheckCycle active watch targeting", () => {
+  function makeRunner(current, checker = vi.fn(async () => ({}))) {
+    return {
+      checker,
+      notifier: vi.fn(),
+      stateLoader: vi.fn(async () => current),
+      stateSaver: vi.fn(async (next) => {
+        current = next;
+      })
+    };
+  }
+
+  it("does not call providers when there are no watches", async () => {
+    const runner = makeRunner(state({ watches: [] }));
+
+    const result = await runCheckCycle(runner);
+
+    expect(runner.checker).not.toHaveBeenCalled();
+    expect(result.skipped).toBe(true);
+  });
+
+  it("does not call providers when all watches are disabled", async () => {
+    const runner = makeRunner(state({ watches: [{ ...state().watches[0], enabled: false }] }));
+
+    await runCheckCycle(runner);
+
+    expect(runner.checker).not.toHaveBeenCalled();
+  });
+
+  it("targets one active provider once", async () => {
+    const checker = vi.fn(async ({ watches }) => ({
+      gangil: [slot({ date: watches[0].date, available: false, availableCount: 0 })]
+    }));
+    const runner = makeRunner(state(), checker);
+
+    await runCheckCycle(runner);
+
+    expect(checker).toHaveBeenCalledTimes(1);
+    expect(checker).toHaveBeenCalledWith({ watches: state().watches, source: "scheduler" });
+  });
+
+  it("deduplicates a provider with multiple active watches", async () => {
+    const watches = [
+      { id: "w1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "w2", venues: ["gangil"], date: "2026-08-30", times: ["20:00~22:00"], enabled: true }
+    ];
+    const runner = makeRunner(state({ watches }));
+
+    await runCheckCycle(runner);
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+    expect(runner.checker.mock.calls[0][0].watches).toEqual(watches);
+  });
+
+  it("deduplicates the same date for a provider", () => {
+    const watches = [
+      { id: "w1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "w2", venues: ["gangil"], date: "2026-08-29", times: ["20:00~22:00"], enabled: true }
+    ];
+
+    expect(buildVenueDateTargets(groupActiveWatchesByVenue(watches))).toEqual({ gangil: ["2026-08-29"] });
+  });
+
+  it("stops checking on the next cycle after a watch is turned off", async () => {
+    const current = state();
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+    current.watches[0].enabled = false;
+    await runCheckCycle(runner);
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("resumes checking on the next cycle after a watch is turned back on", async () => {
+    const current = state({ watches: [{ ...state().watches[0], enabled: false }] });
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+    current.watches[0].enabled = true;
+    await runCheckCycle(runner);
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops checking on the next cycle after a watch is deleted", async () => {
+    const current = state();
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+    current.watches = [];
+    await runCheckCycle(runner);
+
+    expect(runner.checker).toHaveBeenCalledTimes(1);
+  });
+});

@@ -1,11 +1,14 @@
 import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
 import { VENUES } from "./constants.js";
+import { config } from "./config.js";
 import { parseReservationDom } from "./parser.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
 import { fileURLToPath } from "node:url";
 
-export async function checkVenue(page, venueId) {
+const providerLocks = new Map();
+
+export async function checkVenue(page, venueId, options = {}) {
   const venue = VENUES[venueId];
   if (!venue) throw new Error(`Unknown venue: ${venueId}`);
 
@@ -20,10 +23,13 @@ export async function checkVenue(page, venueId) {
   if (reservations.length === 0) {
     throw new Error(`${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
   }
-  return reservations;
+
+  if (!options.dates || options.dates.length === 0) return reservations;
+  const neededDates = new Set(options.dates);
+  return reservations.filter((item) => neededDates.has(item.date));
 }
 
-export async function checkGangdongVenues(venueIds) {
+export async function checkGangdongVenues(venueIds, options = {}) {
   const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "gangdong");
   if (ids.length === 0) return {};
 
@@ -34,7 +40,7 @@ export async function checkGangdongVenues(venueIds) {
 
     const result = {};
     for (const venueId of ids) {
-      result[venueId] = await checkVenue(page, venueId);
+      result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId] });
     }
     return result;
   } finally {
@@ -44,19 +50,53 @@ export async function checkGangdongVenues(venueIds) {
 
 export async function checkAllVenues(options = {}) {
   const watches = options.watches || [];
+  if (watches.length === 0 && options.requireWatches) return {};
+
   const watchedVenueIds = new Set(
     watches.length > 0
       ? watches.flatMap((watch) => watch.venues || (watch.venue ? [watch.venue] : []))
       : Object.keys(VENUES).filter((venueId) => VENUES[venueId].provider !== "olympic")
   );
 
-  const result = await checkGangdongVenues(Array.from(watchedVenueIds));
-  Object.assign(result, await checkSongpaVenues(songpaVenueIdsFromWatches(watches)));
+  const result = {};
+  const venueDates = buildVenueDateTargets(watches);
+  Object.assign(result, await runProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })));
+  Object.assign(result, await runProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches))));
   const olympicWatches = watches.filter(isOlympicWatch);
-  if (olympicWatches.length > 0) {
-    result.olympic = await checkOlympicByWatches(olympicWatches);
+  if (olympicWatches.length > 0 && config.enableOlympicProvider) {
+    const olympicResult = await runProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches));
+    if (olympicResult) result.olympic = olympicResult;
   }
   return result;
+}
+
+export async function runProviderCheck(providerId, fn) {
+  if (providerLocks.has(providerId)) {
+    console.debug(`${providerId} check already running; duplicate check skipped.`);
+    return providerId === "olympic" ? [] : {};
+  }
+
+  const running = Promise.resolve().then(fn);
+  providerLocks.set(providerId, running);
+  try {
+    return await running;
+  } finally {
+    if (providerLocks.get(providerId) === running) providerLocks.delete(providerId);
+  }
+}
+
+export function buildVenueDateTargets(watches) {
+  const targets = {};
+  for (const watch of watches) {
+    if (watch.enabled !== true) continue;
+    for (const venueId of watch.venues || []) {
+      if (!targets[venueId]) targets[venueId] = new Set();
+      targets[venueId].add(watch.date);
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(targets).map(([venueId, dates]) => [venueId, Array.from(dates).sort()])
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

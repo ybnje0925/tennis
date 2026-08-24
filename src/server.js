@@ -4,7 +4,13 @@ import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { OLYMPIC_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
 import { addWatch, deleteWatch, loadState, saveState, updateWatch } from "./storage.js";
-import { runCheckCycle, startScheduler } from "./monitor.js";
+import {
+  buildVenueDateTargets,
+  getActiveWatches,
+  groupActiveWatchesByVenue,
+  runCheckCycle,
+  startScheduler
+} from "./monitor.js";
 import { validateVenueSelection } from "./venueRules.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -43,7 +49,16 @@ app.get("/api/watches", async (req, res, next) => {
 app.get("/api/status", async (req, res, next) => {
   try {
     const state = await loadState();
-    res.json(state.system);
+    const activeByVenue = groupActiveWatchesByVenue(getActiveWatches(state));
+    res.json({
+      ...state.system,
+      activeVenues: Object.fromEntries(
+        Object.keys(VENUES).map((venueId) => [
+          venueId,
+          activeByVenue[venueId]?.length > 0 && (VENUES[venueId].provider !== "olympic" || config.enableOlympicProvider)
+        ])
+      )
+    });
   } catch (error) {
     next(error);
   }
@@ -71,7 +86,7 @@ app.post("/api/watches", async (req, res, next) => {
       date,
       times
     });
-    const immediate = await runCheckCycle().catch((error) => ({ errors: [error.message] }));
+    const immediate = await runCheckCycle({ source: "registration" }).catch((error) => ({ errors: [error.message] }));
     res.status(201).json({ watch, immediate });
   } catch (error) {
     next(error);
@@ -99,6 +114,21 @@ app.delete("/api/watches/:id", async (req, res, next) => {
 app.post("/api/check-now", async (req, res, next) => {
   try {
     const state = await loadState();
+    const activeByVenue = groupActiveWatchesByVenue(getActiveWatches(state));
+    const activeVenueIds = Object.keys(buildVenueDateTargets(activeByVenue)).filter((venueId) => (
+      VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
+    ));
+    if (activeVenueIds.length === 0) {
+      return res.json({
+        checkedAt: null,
+        reservationCount: 0,
+        notificationCount: 0,
+        errors: [],
+        message: "활성화된 알림 조건이 없습니다.",
+        sample: []
+      });
+    }
+
     const now = Date.now();
     const lastManual = state.system.lastManualCheckAt ? Date.parse(state.system.lastManualCheckAt) : 0;
     const cooldownMs = 45_000;
@@ -110,12 +140,13 @@ app.post("/api/check-now", async (req, res, next) => {
     state.system.lastManualCheckAt = new Date(now).toISOString();
     await saveState(state);
 
-    const result = await runCheckCycle({ forceCheck: true });
+    const result = await runCheckCycle({ source: "manual" });
     res.json({
       checkedAt: result.checkedAt,
       reservationCount: result.reservations.length,
       notificationCount: result.notifications.length,
       errors: result.errors,
+      message: result.skipped ? "활성화된 알림 조건이 없습니다." : null,
       sample: result.reservations.slice(0, 5)
     });
   } catch (error) {

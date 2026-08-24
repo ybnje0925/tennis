@@ -22,6 +22,7 @@ export const config = {
   dataDir: process.env.DATA_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/data` : "data"),
   sessionDir: process.env.SESSION_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/sessions` : "sessions"),
   enableTestTools: bool(process.env.ENABLE_TEST_TOOLS, false),
+  enableOlympicProvider: bool(process.env.ENABLE_OLYMPIC_PROVIDER, true),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),
   checkIntervalMinutes: int(process.env.CHECK_INTERVAL_MINUTES, 10)

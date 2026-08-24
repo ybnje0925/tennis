@@ -18,7 +18,6 @@ let gangdongTimeSlots = [];
 let olympicTimeSlots = [];
 let venueGroups = { twoHour: [], oneHour: [] };
 let venueOptions = [];
-
 let venueNames = {};
 
 async function request(path, options) {
@@ -71,12 +70,12 @@ async function loadStatus() {
   const status = await request("/api/status");
   lastCheckedEl.textContent = formatDateTime(status.lastCheckedAt);
   nextCheckEl.textContent = formatDateTime(status.nextCheckAt);
-  gangilStatusEl.textContent = status.venues?.gangil?.ok ? "조회 정상" : "대기 중";
-  myeongilStatusEl.textContent = status.venues?.myeongil?.ok ? "조회 정상" : "대기 중";
-  olympicStatusEl.textContent = status.venues?.olympic?.ok ? "조회 정상" : "대기 중";
-  songpaStatusEl.textContent = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.venues?.[id]?.ok)
-    ? "조회 정상"
-    : "대기 중";
+  gangilStatusEl.textContent = status.activeVenues?.gangil ? "감시 중" : "미사용";
+  myeongilStatusEl.textContent = status.activeVenues?.myeongil ? "감시 중" : "미사용";
+  olympicStatusEl.textContent = status.activeVenues?.olympic ? "감시 중" : "미사용";
+  songpaStatusEl.textContent = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id])
+    ? "감시 중"
+    : "미사용";
   logsEl.innerHTML = (status.logs || []).length
     ? status.logs.slice().reverse().map((line) => `<div>${line}</div>`).join("")
     : `<p class="empty">아직 로그가 없습니다.</p>`;
@@ -90,7 +89,7 @@ async function loadWatches() {
   }
   watchesEl.innerHTML = watches
     .map((watch) => {
-      const venues = watch.venues.map((venue) => venueNames[venue]).join(", ");
+      const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const olympicDetail = watch.provider === "olympic"
         ? `<div>${watch.times.join("<br />")}</div>`
         : `<div>${watch.times.join("<br />")}</div>`;
@@ -100,7 +99,7 @@ async function loadWatches() {
             <strong>${venues}</strong>
             <div>${formatDate(watch.date)}</div>
             ${olympicDetail}
-            <div class="watch-state">${watch.enabled === false ? "알림 꺼짐" : "알림 대기 중"}</div>
+            <div class="watch-state">${watch.enabled === true ? "감시 중" : "일시정지"}</div>
           </div>
           <div class="watch-actions">
             <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}">
@@ -216,8 +215,9 @@ checkNowButton.addEventListener("click", async () => {
   checkNowButton.disabled = true;
   try {
     const result = await request("/api/check-now", { method: "POST", body: "{}" });
-    setStatus(`확인 완료: ${result.reservationCount}개 항목, 알림 ${result.notificationCount}건`);
+    setStatus(result.message || `확인 완료: ${result.reservationCount}개 항목, 알림 ${result.notificationCount}건`);
     await loadStatus();
+    if (result.message) checkNowButton.disabled = false;
   } catch (error) {
     setStatus(error.message);
   } finally {

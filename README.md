@@ -23,6 +23,7 @@ OLYMPIC_USER_ID=
 OLYMPIC_USER_PASSWORD=
 SONGPA_USER_ID=
 SONGPA_USER_PASSWORD=
+ENABLE_OLYMPIC_PROVIDER=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 HEADLESS=true
@@ -46,6 +47,8 @@ npm run diagnose:headless
 npm run diagnose:songpa
 ```
 
+Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬 `diagnose:olympic`을 동시에 실행하지 마십시오. 올림픽공원 자동 감시가 필요 없는 로컬 개발환경에서는 `ENABLE_OLYMPIC_PROVIDER=false`로 두면 scheduler/manual 자동 조회에서 Olympic provider를 호출하지 않습니다. 단, `npm run diagnose:olympic`은 명시적인 진단 명령이므로 이 값과 별도로 실행할 수 있습니다.
+
 서버 실행 중에는 등록된 알림 조건을 기준으로 10분마다 자동 조회합니다. 같은 주기에 강일/명일 예약현황은 각각 1회만 조회하고, 가져온 결과를 모든 조건과 비교합니다.
 
 ## 동작 방식
@@ -64,6 +67,7 @@ npm run diagnose:songpa
 - 알림 조건과 마지막 상태: `data/state.json`
 - Chromium 세션: `sessions/gangdong-profile/`
 - Headless storage state: `sessions/gangdong-storage-state.json`
+- Olympic Chromium 세션: `sessions/olympic-profile/`
 
 두 경로는 `.gitignore`와 ZIP 제외 대상입니다.
 
@@ -130,6 +134,7 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
+ENABLE_OLYMPIC_PROVIDER=true
 CHECK_INTERVAL_MINUTES=10
 RAILWAY_RUN_UID=0
 ```
@@ -144,6 +149,8 @@ SONGPA_USER_PASSWORD = 실제 송파 비밀번호
 기존 `GANGDONG_USER_ID`, `GANGDONG_USER_PASSWORD`, `OLYMPIC_USER_ID`, `OLYMPIC_USER_PASSWORD`와 독립적으로 관리합니다.
 
 알림 조건과 세션을 유지하려면 Railway Volume을 서비스에 연결하고 mount path를 `/data`로 설정합니다. Docker 기본 저장 경로가 `/data/data`, `/data/sessions`이므로 이 Volume에 상태와 세션이 저장됩니다.
+
+올림픽공원 계정을 사용하는 동안 Railway Replica는 `1`로 유지하세요. 동일 서비스를 여러 replica로 scale-out하면 같은 계정으로 여러 프로세스가 동시에 로그인할 수 있습니다. 운영 Railway에는 `ENABLE_OLYMPIC_PROVIDER=true`를 설정하고, 동일 계정으로 로컬 진단을 병행하지 않는 구성을 권장합니다.
 
 Railway 서비스 설정에서 Public Networking의 도메인을 생성하면 기존 웹 UI에 접속할 수 있습니다. Healthcheck Path는 `/health`입니다.
 

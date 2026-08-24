@@ -5,6 +5,10 @@ import { config, assertOlympicLoginConfig } from "../config.js";
 import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
+let olympicSessionPromise = null;
+let olympicSession = null;
+let olympicLoginPromise = null;
+
 const DATE_LOOKUP_STATES = {
   DATE_NOT_FOUND: "DATE_NOT_FOUND",
   AVAILABLE_COUNT_ZERO: "AVAILABLE_COUNT_ZERO",
@@ -24,6 +28,20 @@ export const olympicProvider = {
 };
 
 export async function openOlympicSession(options = {}) {
+  if (olympicSession && !olympicSession.page.isClosed()) {
+    return { ...olympicSession, sessionSource: "existing" };
+  }
+  if (olympicSessionPromise) return olympicSessionPromise;
+
+  olympicSessionPromise = createOlympicSession(options);
+  try {
+    return await olympicSessionPromise;
+  } finally {
+    olympicSessionPromise = null;
+  }
+}
+
+async function createOlympicSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
   const context = await chromium.launchPersistentContext(SESSION_DIR, {
     headless: options.headless ?? config.headless,
@@ -32,21 +50,55 @@ export async function openOlympicSession(options = {}) {
   });
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(20_000);
-  return { context, page };
+  const originalClose = context.close.bind(context);
+  context.close = async (...args) => {
+    try {
+      return await originalClose(...args);
+    } finally {
+      if (olympicSession?.context === context) olympicSession = null;
+    }
+  };
+  olympicSession = { context, page };
+  return { ...olympicSession, sessionSource: "restored" };
+}
+
+export async function closeOlympicSession() {
+  if (!olympicSession) return;
+  await olympicSession.context.close();
 }
 
 export async function isOlympicLoggedIn(page) {
   await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  if (isOlympicDuplicateSessionText(body)) return false;
   return /로그아웃|마이페이지|신청내역/.test(body) && !/통합회원\s*ID로그인/.test(body);
 }
 
 export async function ensureOlympicLoggedIn(page) {
+  if (olympicLoginPromise) return olympicLoginPromise;
+  olympicLoginPromise = ensureOlympicLoggedInOnce(page);
+  try {
+    return await olympicLoginPromise;
+  } finally {
+    olympicLoginPromise = null;
+  }
+}
+
+async function ensureOlympicLoggedInOnce(page) {
+  console.info("[Olympic]");
+  console.info("provider lock: acquired");
   if (await isOlympicLoggedIn(page)) {
     await openOlympicReservationPage(page).catch(() => {});
-    if (!/\/sso\/usr\/login\/view/.test(page.url())) return true;
+    if (!/\/sso\/usr\/login\/view/.test(page.url())) {
+      console.info("session source: existing");
+      console.info("login required: no");
+      console.info("duplicate login detected: no");
+      return true;
+    }
   }
 
+  console.info("session source: restored");
+  console.info("login required: yes");
   assertOlympicLoginConfig();
   await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
@@ -55,10 +107,12 @@ export async function ensureOlympicLoggedIn(page) {
   await page.locator("#login_pwd, input[name='login_pwd'], input[type='password']").first().fill(config.olympicUserPassword);
 
   const dialogMessages = [];
-  page.on("dialog", async (dialog) => {
-    dialogMessages.push(dialog.message());
-    if (/접속중|계속 진행/.test(dialog.message())) await dialog.accept();
-    else await dialog.dismiss().catch(() => {});
+  let duplicateSessionDetected = false;
+  page.once("dialog", async (dialog) => {
+    const message = dialog.message();
+    dialogMessages.push(message);
+    if (isOlympicDuplicateSessionText(message)) duplicateSessionDetected = true;
+    await dialog.dismiss().catch(() => {});
   });
 
   await Promise.all([
@@ -66,13 +120,32 @@ export async function ensureOlympicLoggedIn(page) {
     page.locator("button:has-text('로그인'), .btn_login").first().click()
   ]);
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  if (duplicateSessionDetected || isOlympicDuplicateSessionText(body)) {
+    console.warn("Olympic duplicate session detected.");
+    console.warn("Automatic session takeover skipped.");
+    console.info("duplicate login detected: yes");
+    throw new OlympicDuplicateSessionError();
+  }
+
   await openOlympicReservationPage(page).catch(() => {});
 
-  const loggedIn = !/\/sso\/usr\/login\/view/.test(page.url());
+  const loggedIn = await isOlympicLoggedIn(page) && !/\/sso\/usr\/login\/view/.test(page.url());
   if (!loggedIn && dialogMessages.length > 0) {
     throw new Error(`Olympic login failed: ${dialogMessages.at(-1)}`);
   }
+  console.info("session source: new-login");
+  console.info("duplicate login detected: no");
   return loggedIn;
+}
+
+export async function getAuthenticatedOlympicPage(options = {}) {
+  const session = await openOlympicSession(options);
+  console.info("[Olympic]");
+  console.info(`session source: ${session.sessionSource}`);
+  const loggedIn = await ensureOlympicLoggedIn(session.page);
+  if (!loggedIn) throw new Error("Olympic login failed.");
+  return session.page;
 }
 
 export async function openOlympicReservationPage(page) {
@@ -437,10 +510,8 @@ export async function checkOlympicByWatches(watches) {
     }
   }
 
-  const { context, page } = await openOlympicSession();
   try {
-    const loggedIn = await ensureOlympicLoggedIn(page);
-    if (!loggedIn) throw new Error("Olympic login failed.");
+    const page = await getAuthenticatedOlympicPage();
 
     const allSlots = [];
     const failedDateLookups = new Set();
@@ -458,8 +529,9 @@ export async function checkOlympicByWatches(watches) {
       }
     }
     return uniqueOlympicSlots(allSlots);
-  } finally {
-    await context.close();
+  } catch (error) {
+    if (error instanceof OlympicDuplicateSessionError) return [];
+    throw error;
   }
 }
 
@@ -503,6 +575,18 @@ export class OlympicDateLookupError extends Error {
     this.date = date;
     this.calendar = calendar;
   }
+}
+
+export class OlympicDuplicateSessionError extends Error {
+  constructor() {
+    super("Olympic duplicate session detected. Automatic session takeover skipped.");
+    this.name = "OlympicDuplicateSessionError";
+    this.code = "OLYMPIC_DUPLICATE_SESSION";
+  }
+}
+
+export function isOlympicDuplicateSessionText(text) {
+  return /현재\s*IP에서\s*접속중인\s*계정|현재\s*접속중인\s*계정|이전\s*접속을\s*종료하고\s*계속\s*진행/.test(text || "");
 }
 
 export function parseOlympicCalendarPeriodText(text, fallbackYear = new Date().getFullYear()) {
