@@ -3,7 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { OLYMPIC_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
-import { addWatch, deleteWatch, loadState, saveState, updateWatch } from "./storage.js";
+import {
+  addWatch,
+  claimInviteCode,
+  connectTelegramLinkToken,
+  createTelegramLinkToken,
+  deleteWatch,
+  getUserBySessionToken,
+  loadState,
+  saveState,
+  updateWatch
+} from "./storage.js";
+import { sendTelegramMessage } from "./telegramNotifier.js";
 import {
   buildVenueDateTargets,
   getActiveWatches,
@@ -19,11 +30,71 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.resolve(__dirname, "..", "public")));
 
+const SESSION_COOKIE = "tennis_session";
+
+function parseCookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const index = part.indexOf("=");
+        return index === -1 ? [part, ""] : [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+      })
+  );
+}
+
+function setSessionCookie(res, token) {
+  const secure = process.env.NODE_ENV === "production";
+  res.cookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    maxAge: 180 * 24 * 60 * 60 * 1000,
+    path: "/"
+  });
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    telegramConnected: Boolean(user.telegramConnected),
+    enabled: user.enabled !== false
+  };
+}
+
+async function requireUser(req, res, next) {
+  try {
+    const token = parseCookies(req)[SESSION_COOKIE] || bearerToken(req);
+    const user = await getUserBySessionToken(token);
+    if (!user) return res.status(401).json({ error: "초대 인증이 필요합니다." });
+    req.user = user;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization || "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1] || "";
+}
+
+function requireAdmin(req, res, next) {
+  if (!config.adminApiToken || req.headers["x-admin-token"] !== config.adminApiToken) {
+    return res.status(403).json({ error: "관리자 권한이 필요합니다." });
+  }
+  next();
+}
+
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/options", (req, res) => {
+app.get("/api/options", requireUser, (req, res) => {
   res.json({
     venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl }) => ({ id, name, provider, slotMinutes, publicUrl })),
     venueGroups: {
@@ -37,16 +108,72 @@ app.get("/api/options", (req, res) => {
   });
 });
 
-app.get("/api/watches", async (req, res, next) => {
+app.get("/api/session", async (req, res, next) => {
   try {
-    const state = await loadState();
-    res.json(state.watches);
+    const token = parseCookies(req)[SESSION_COOKIE] || bearerToken(req);
+    const user = await getUserBySessionToken(token);
+    res.json({ authenticated: Boolean(user), user: user ? publicUser(user) : null });
   } catch (error) {
     next(error);
   }
 });
 
-app.get("/api/status", async (req, res, next) => {
+app.post("/api/invite/claim", async (req, res, next) => {
+  try {
+    const { code, name } = req.body || {};
+    const { user, token } = await claimInviteCode({ code, name });
+    setSessionCookie(res, token);
+    res.status(201).json({ user: publicUser(user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/telegram/link-token", requireUser, async (req, res, next) => {
+  try {
+    if (!config.telegramBotUsername) throw new Error("TELEGRAM_BOT_USERNAME is not configured.");
+    const token = await createTelegramLinkToken(req.user.id);
+    res.json({
+      url: `https://t.me/${config.telegramBotUsername}?start=${encodeURIComponent(token)}`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/telegram/webhook", async (req, res, next) => {
+  try {
+    const message = req.body?.message;
+    const chatId = message?.chat?.id;
+    const text = String(message?.text || "");
+    const token = text.match(/^\/start\s+(.+)$/)?.[1]?.trim();
+    if (!chatId || !token) return res.json({ ok: true });
+
+    const user = await connectTelegramLinkToken(token, chatId);
+    if (user) {
+      await sendTelegramMessage([
+        "🎾 테니스 잡아줘",
+        "",
+        "텔레그램 알림 연결이 완료되었습니다.",
+        "이제 원하는 코트와 날짜, 시간대를 등록해주세요."
+      ].join("\n"), { chatId: String(chatId) });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/watches", requireUser, async (req, res, next) => {
+  try {
+    const state = await loadState();
+    res.json(state.watches.filter((watch) => watch.userId === req.user.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/status", requireUser, async (req, res, next) => {
   try {
     const state = await loadState();
     const activeByVenue = groupActiveWatchesByVenue(getActiveWatches(state));
@@ -64,8 +191,11 @@ app.get("/api/status", async (req, res, next) => {
   }
 });
 
-app.post("/api/watches", async (req, res, next) => {
+app.post("/api/watches", requireUser, async (req, res, next) => {
   try {
+    if (!req.user.telegramConnected || !req.user.telegramChatId) {
+      return res.status(403).json({ error: "텔레그램 연결 후 알림을 등록할 수 있습니다." });
+    }
     const { venues, date, times } = req.body;
     const venueValidation = validateVenueSelection(venues);
     if (!venueValidation.ok) throw new Error(venueValidation.message);
@@ -79,39 +209,40 @@ app.post("/api/watches", async (req, res, next) => {
     } else if (!Array.isArray(times) || times.length === 0) {
       throw new Error("시간대를 선택하세요.");
     }
+    const provider = VENUES[venues[0]]?.provider;
     const watch = await addWatch({
-      provider: includesOlympic ? "olympic" : "gangdong",
+      userId: req.user.id,
+      provider,
       venue: includesOlympic ? "olympic" : undefined,
       venues,
       date,
       times
     });
-    const immediate = await runCheckCycle({ source: "registration" }).catch((error) => ({ errors: [error.message] }));
-    res.status(201).json({ watch, immediate });
+    res.status(201).json({ watch });
   } catch (error) {
     next(error);
   }
 });
 
-app.patch("/api/watches/:id", async (req, res, next) => {
+app.patch("/api/watches/:id", requireUser, async (req, res, next) => {
   try {
-    const watch = await updateWatch(req.params.id, req.body);
+    const watch = await updateWatch(req.params.id, req.body, req.user.id);
     res.json(watch);
   } catch (error) {
     next(error);
   }
 });
 
-app.delete("/api/watches/:id", async (req, res, next) => {
+app.delete("/api/watches/:id", requireUser, async (req, res, next) => {
   try {
-    await deleteWatch(req.params.id);
+    await deleteWatch(req.params.id, req.user.id);
     res.status(204).end();
   } catch (error) {
     next(error);
   }
 });
 
-app.post("/api/check-now", async (req, res, next) => {
+app.post("/api/check-now", requireAdmin, async (req, res, next) => {
   try {
     const state = await loadState();
     const activeByVenue = groupActiveWatchesByVenue(getActiveWatches(state));
@@ -154,7 +285,7 @@ app.post("/api/check-now", async (req, res, next) => {
   }
 });
 
-app.post("/api/test/fake-availability", async (req, res, next) => {
+app.post("/api/test/fake-availability", requireAdmin, async (req, res, next) => {
   try {
     if (!config.enableTestTools) return res.status(404).json({ error: "Not found" });
     const state = await loadState();

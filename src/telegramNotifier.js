@@ -22,10 +22,16 @@ export function canSendTelegram() {
 }
 
 export async function sendTelegramMessage(message, options = {}) {
-  assertTelegramConfig();
+  if (!config.telegramBotToken) {
+    throw new TelegramConfigurationError("TELEGRAM_BOT_TOKEN is not configured");
+  }
+  const chatId = options.chatId || config.telegramChatId;
+  if (!chatId) {
+    throw new TelegramConfigurationError("Telegram chat id is not configured");
+  }
 
   const body = {
-    chat_id: config.telegramChatId,
+    chat_id: chatId,
     text: message,
     disable_web_page_preview: true
   };

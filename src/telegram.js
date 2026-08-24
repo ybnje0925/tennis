@@ -6,8 +6,8 @@ import {
 
 export { canSendTelegram };
 
-export async function sendTelegram(message) {
-  return sendTelegramMessage(message);
+export async function sendTelegram(message, chatId) {
+  return sendTelegramMessage(message, chatId ? { chatId } : {});
 }
 
 export function buildNotificationMessage(item) {

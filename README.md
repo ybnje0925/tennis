@@ -26,6 +26,9 @@ SONGPA_USER_PASSWORD=
 ENABLE_OLYMPIC_PROVIDER=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+TELEGRAM_BOT_USERNAME=
+ADMIN_API_TOKEN=
+LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
 CHECK_INTERVAL_MINUTES=10
@@ -82,8 +85,59 @@ Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬
 
 1. Telegram에서 `BotFather`로 봇을 만들고 Bot Token을 받습니다.
 2. 봇에게 메시지를 한 번 보냅니다.
-3. `https://api.telegram.org/bot<토큰>/getUpdates`로 `chat.id`를 확인합니다.
-4. `.env`의 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`에 입력합니다.
+3. BotFather에서 봇 username을 확인합니다.
+4. `.env`의 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`에 입력합니다.
+5. Closed Beta 사용자별 알림은 각 사용자가 웹에서 Telegram 연결을 완료하면 저장되는 `telegramChatId`로 발송됩니다. `TELEGRAM_CHAT_ID`는 수동 테스트용 fallback입니다.
+
+Closed Beta Telegram 연결을 위해 Railway 배포 URL 기준 webhook을 등록합니다.
+
+```bash
+curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<railway-domain>/api/telegram/webhook"
+```
+
+## Closed Beta 운영
+
+이 서비스는 회원가입 없이 초대코드로만 진입합니다. 일반 사용자는 전체 사용자 목록이나 전체 알림 조건을 볼 수 없고, 자기 알림 조건만 조회/수정/삭제할 수 있습니다.
+
+초대코드 생성:
+
+```bash
+npm run create-invite
+```
+
+특정 코드를 직접 만들려면:
+
+```bash
+npm run create-invite -- TENNIS-ABCD-1234
+```
+
+사용자 비활성화:
+
+```bash
+npm run disable-user -- <userId>
+```
+
+다시 활성화:
+
+```bash
+npm run disable-user -- <userId> enable
+```
+
+기존 `state.json`에 `userId`가 없는 legacy watch가 있으면 삭제하지 않습니다. 기존 watch를 특정 관리자 사용자에게 귀속하려면 먼저 초대코드로 관리자 사용자를 만들고 `state.json`의 사용자 id를 확인한 뒤 Railway Variables에 다음 값을 설정하고 재시작합니다.
+
+```env
+LEGACY_OWNER_USER_ID=<admin-user-id>
+```
+
+일반 사용자를 초대하는 절차:
+
+1. 운영자가 `npm run create-invite`로 초대코드를 생성합니다.
+2. 지인에게 초대코드를 전달합니다.
+3. 지인이 웹에 접속해 초대코드와 별명을 입력합니다.
+4. 지인이 `텔레그램 연결하기`를 눌러 Telegram 봇을 엽니다.
+5. Telegram에서 `/start <1회성토큰>`이 전송되면 서버가 해당 chat id를 사용자와 연결합니다.
+6. 웹에서 코트, 날짜, 시간대를 선택해 알림 조건을 등록합니다.
+7. 공통 scheduler가 다음 조회 시점에 한 번 예약현황을 조회하고, 조건에 맞는 사용자에게만 Telegram을 보냅니다.
 
 Telegram 연결만 확인하려면:
 
@@ -135,6 +189,9 @@ SONGPA_USER_ID=
 SONGPA_USER_PASSWORD=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+TELEGRAM_BOT_USERNAME=
+ADMIN_API_TOKEN=
+LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
 ENABLE_OLYMPIC_PROVIDER=true

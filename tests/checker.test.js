@@ -69,6 +69,24 @@ describe("checkAllVenues targeting", () => {
     expect(page.goto).toHaveBeenCalledTimes(1);
   });
 
+  it("deduplicates live venue checks across users", async () => {
+    const context = { close: vi.fn() };
+    const page = {
+      goto: vi.fn(),
+      waitForLoadState: vi.fn(async () => {})
+    };
+    openGangdongSession.mockResolvedValueOnce({ context, page });
+
+    await checkAllVenues({
+      watches: [
+        { id: "a", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "b", userId: "u2", venues: ["gangil"], date: "2026-08-29", times: ["10:00~12:00"], enabled: true }
+      ]
+    });
+
+    expect(page.goto).toHaveBeenCalledTimes(1);
+  });
+
   it("skips duplicate provider checks while one is already running", async () => {
     let release;
     const running = vi.fn(() => new Promise((resolve) => {

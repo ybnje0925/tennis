@@ -1,4 +1,10 @@
 const form = document.querySelector("#watchForm");
+const inviteForm = document.querySelector("#inviteForm");
+const invitePanel = document.querySelector("#invitePanel");
+const inviteStatusEl = document.querySelector("#inviteStatus");
+const appContentEl = document.querySelector("#appContent");
+const telegramPanel = document.querySelector("#telegramPanel");
+const connectTelegramButton = document.querySelector("#connectTelegram");
 const statusEl = document.querySelector("#status");
 const watchesEl = document.querySelector("#watches");
 const timeSlotsEl = document.querySelector("#timeSlots");
@@ -17,7 +23,6 @@ const reservationLinks = {
   olympic: document.querySelector("#olympicLink"),
   songpa: document.querySelector("#songpaLink")
 };
-const checkNowButton = document.querySelector("#checkNow");
 const venueGroupsEl = document.querySelector("#venueGroups");
 const venueSelectionHelpEl = document.querySelector("#venueSelectionHelp");
 let gangdongTimeSlots = [];
@@ -27,6 +32,7 @@ let venueOptions = [];
 let venueNames = {};
 let venuePublicUrls = {};
 let providerPublicUrls = {};
+let currentUser = null;
 
 async function request(path, options) {
   const response = await fetch(path, {
@@ -43,6 +49,10 @@ async function request(path, options) {
 
 function setStatus(message) {
   statusEl.textContent = message;
+}
+
+function setInviteStatus(message) {
+  inviteStatusEl.textContent = message;
 }
 
 function formatDateTime(value) {
@@ -81,6 +91,19 @@ async function loadOptions() {
   renderVenueGroups();
   renderTimeSlots(gangdongTimeSlots);
   testToolsEl.classList.toggle("hidden", !options.enableTestTools);
+}
+
+async function loadSession() {
+  const session = await request("/api/session");
+  currentUser = session.user;
+  invitePanel.classList.toggle("hidden", session.authenticated);
+  appContentEl.classList.toggle("hidden", !session.authenticated);
+  telegramPanel.classList.toggle("hidden", !session.authenticated || currentUser.telegramConnected);
+  form.querySelector("button[type='submit']").disabled = !currentUser?.telegramConnected;
+  if (session.authenticated && !currentUser.telegramConnected) {
+    setStatus("텔레그램 연결 후 알림을 등록할 수 있습니다.");
+  }
+  return session;
 }
 
 function updateReservationLinks() {
@@ -161,6 +184,10 @@ async function loadWatches() {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!currentUser?.telegramConnected) {
+    setStatus("텔레그램 연결 후 알림을 등록할 수 있습니다.");
+    return;
+  }
   const data = new FormData(form);
   const payload = {
     venues: data.getAll("venues"),
@@ -174,6 +201,36 @@ form.addEventListener("submit", async (event) => {
     setStatus("알림 조건을 등록했습니다. 현재 빈자리가 있으면 1회 알려드립니다.");
     await loadWatches();
     await loadStatus();
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
+inviteForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(inviteForm);
+  try {
+    await request("/api/invite/claim", {
+      method: "POST",
+      body: JSON.stringify({
+        code: data.get("code"),
+        name: data.get("name")
+      })
+    });
+    inviteForm.reset();
+    setInviteStatus("");
+    await bootApp();
+  } catch (error) {
+    setInviteStatus(error.message);
+  }
+});
+
+connectTelegramButton.addEventListener("click", async () => {
+  try {
+    const result = await request("/api/telegram/link-token", { method: "POST", body: "{}" });
+    window.open(result.url, "_blank", "noopener,noreferrer");
+    setStatus("Telegram에서 /start 메시지를 보낸 뒤 잠시 후 화면을 새로고침합니다.");
+    setTimeout(bootApp, 5000);
   } catch (error) {
     setStatus(error.message);
   }
@@ -256,23 +313,6 @@ watchesEl.addEventListener("click", async (event) => {
   await loadStatus();
 });
 
-checkNowButton.addEventListener("click", async () => {
-  setStatus("예약현황을 확인하는 중입니다.");
-  checkNowButton.disabled = true;
-  try {
-    const result = await request("/api/check-now", { method: "POST", body: "{}" });
-    setStatus(result.message || `확인 완료: ${result.reservationCount}개 항목, 알림 ${result.notificationCount}건`);
-    await loadStatus();
-    if (result.message) checkNowButton.disabled = false;
-  } catch (error) {
-    setStatus(error.message);
-  } finally {
-    setTimeout(() => {
-      checkNowButton.disabled = false;
-    }, 45_000);
-  }
-});
-
 document.querySelector("#fakeAvailability").addEventListener("click", async () => {
   try {
     const result = await request("/api/test/fake-availability", { method: "POST", body: "{}" });
@@ -282,8 +322,23 @@ document.querySelector("#fakeAvailability").addEventListener("click", async () =
   }
 });
 
-await loadOptions();
-updateVenueSelection();
-await loadWatches();
-await loadStatus();
-setInterval(loadStatus, 30_000);
+function updateOlympicFields() {
+  updateVenueSelection();
+}
+
+async function bootApp() {
+  const session = await loadSession();
+  if (!session.authenticated) return;
+  await loadOptions();
+  updateVenueSelection();
+  await loadWatches();
+  await loadStatus();
+}
+
+await bootApp();
+setInterval(async () => {
+  if (currentUser) {
+    const session = await loadSession();
+    if (session.authenticated) await loadStatus();
+  }
+}, 30_000);

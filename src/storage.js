@@ -7,6 +7,10 @@ const DATA_DIR = path.resolve(config.dataDir);
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 
 const initialState = {
+  users: [],
+  inviteCodes: [],
+  sessions: [],
+  telegramLinkTokens: [],
   watches: [],
   lastAvailability: {},
   sentNotifications: {},
@@ -40,6 +44,7 @@ export async function addWatch(input) {
   const state = await loadState();
   const watch = {
     id: crypto.randomUUID(),
+    userId: input.userId,
     provider: input.provider,
     venues: input.venues,
     venue: input.venue,
@@ -53,22 +58,152 @@ export async function addWatch(input) {
   return watch;
 }
 
-export async function deleteWatch(id) {
+export async function deleteWatch(id, userId = null) {
   const state = await loadState();
-  state.watches = state.watches.filter((watch) => watch.id !== id);
+  const watch = state.watches.find((item) => item.id === id);
+  if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
+  if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
+  state.watches = state.watches.filter((item) => item.id !== id);
   for (const key of Object.keys(state.sentNotifications)) {
     if (key.startsWith(`${id}|`)) delete state.sentNotifications[key];
   }
   await saveState(state);
 }
 
-export async function updateWatch(id, patch) {
+export async function updateWatch(id, patch, userId = null) {
   const state = await loadState();
   const watch = state.watches.find((item) => item.id === id);
   if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
+  if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
   if (typeof patch.enabled === "boolean") watch.enabled = patch.enabled;
   await saveState(state);
   return watch;
+}
+
+export function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export function createRandomToken(byteLength = 32) {
+  return crypto.randomBytes(byteLength).toString("base64url");
+}
+
+export function createInviteCode() {
+  const left = crypto.randomBytes(2).toString("hex").toUpperCase();
+  const mid = crypto.randomBytes(2).toString("hex").toUpperCase();
+  const right = crypto.randomBytes(2).toString("hex").toUpperCase();
+  return `TENNIS-${left}-${mid}-${right}`;
+}
+
+export async function addInviteCode(input = {}) {
+  const state = await loadState();
+  const invite = {
+    code: input.code || createInviteCode(),
+    used: false,
+    usedBy: null,
+    createdAt: new Date().toISOString(),
+    usedAt: null,
+    enabled: input.enabled !== false
+  };
+  state.inviteCodes.push(invite);
+  await saveState(state);
+  return invite;
+}
+
+export async function claimInviteCode({ code, name }) {
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  const state = await loadState();
+  const invite = state.inviteCodes.find((item) => item.code === normalizedCode);
+  if (!invite) throw new Error("유효하지 않은 초대코드입니다.");
+  if (invite.enabled === false) throw new Error("비활성화된 초대코드입니다.");
+  if (invite.used) throw new Error("이미 사용된 초대코드입니다.");
+
+  const now = new Date().toISOString();
+  const user = {
+    id: crypto.randomUUID(),
+    name: String(name || "").trim() || null,
+    telegramChatId: null,
+    telegramConnected: false,
+    enabled: true,
+    createdAt: now
+  };
+  const token = createRandomToken();
+  const session = {
+    tokenHash: hashToken(token),
+    userId: user.id,
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
+  };
+
+  invite.used = true;
+  invite.usedBy = user.id;
+  invite.usedAt = now;
+  state.users.push(user);
+  state.sessions.push(session);
+  await saveState(state);
+  return { user, token };
+}
+
+export async function getUserBySessionToken(token) {
+  if (!token) return null;
+  const state = await loadState();
+  const tokenHash = hashToken(token);
+  const session = state.sessions.find((item) => item.tokenHash === tokenHash);
+  if (!session || Date.parse(session.expiresAt) <= Date.now()) return null;
+  const user = state.users.find((item) => item.id === session.userId);
+  if (!user || user.enabled === false) return null;
+  session.lastSeenAt = new Date().toISOString();
+  await saveState(state);
+  return user;
+}
+
+export async function createTelegramLinkToken(userId) {
+  const state = await loadState();
+  const user = state.users.find((item) => item.id === userId);
+  if (!user || user.enabled === false) throw new Error("사용자를 찾을 수 없습니다.");
+  const token = createRandomToken(24);
+  const now = new Date();
+  state.telegramLinkTokens.push({
+    tokenHash: hashToken(token),
+    userId,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+    used: false,
+    usedAt: null
+  });
+  await saveState(state);
+  return token;
+}
+
+export async function connectTelegramLinkToken(token, chatId) {
+  const state = await loadState();
+  const tokenHash = hashToken(String(token || ""));
+  const link = state.telegramLinkTokens.find((item) => item.tokenHash === tokenHash);
+  if (!link || link.used || Date.parse(link.expiresAt) <= Date.now()) return null;
+  const user = state.users.find((item) => item.id === link.userId);
+  if (!user || user.enabled === false) return null;
+
+  user.telegramChatId = String(chatId);
+  user.telegramConnected = true;
+  link.used = true;
+  link.usedAt = new Date().toISOString();
+  await saveState(state);
+  return user;
+}
+
+export async function setUserEnabled(userId, enabled) {
+  const state = await loadState();
+  const user = state.users.find((item) => item.id === userId);
+  if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+  user.enabled = enabled;
+  if (!enabled) {
+    for (const watch of state.watches.filter((item) => item.userId === userId)) {
+      watch.enabled = false;
+    }
+  }
+  await saveState(state);
+  return user;
 }
 
 function normalizeState(raw) {
@@ -82,8 +217,12 @@ function normalizeState(raw) {
   };
 
   state.watches = Array.isArray(state.watches)
-    ? state.watches.map((watch) => ({ enabled: true, ...watch }))
+    ? state.watches.map((watch) => ({ enabled: true, ...watch, userId: watch.userId || config.legacyOwnerUserId || null }))
     : [];
+  state.users = Array.isArray(state.users) ? state.users : [];
+  state.inviteCodes = Array.isArray(state.inviteCodes) ? state.inviteCodes : [];
+  state.sessions = Array.isArray(state.sessions) ? state.sessions : [];
+  state.telegramLinkTokens = Array.isArray(state.telegramLinkTokens) ? state.telegramLinkTokens : [];
   state.lastAvailability = state.lastAvailability || {};
   state.sentNotifications = state.sentNotifications || {};
   state.system.venues = state.system.venues || {};

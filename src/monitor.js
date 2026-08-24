@@ -21,7 +21,12 @@ function availabilityValue(value) {
 }
 
 export function getActiveWatches(state) {
-  return state.watches.filter((watch) => watch.enabled === true);
+  const enabledUsers = new Set(
+    (state.users || [])
+      .filter((user) => user.enabled !== false && user.telegramConnected && user.telegramChatId)
+      .map((user) => user.id)
+  );
+  return state.watches.filter((watch) => watch.enabled === true && watch.userId && enabledUsers.has(watch.userId));
 }
 
 export function groupActiveWatchesByVenue(watches) {
@@ -184,6 +189,7 @@ export async function runCheckCycle({
 } = {}) {
   const state = await stateLoader();
   state.system.providers ||= {};
+  const usersById = new Map((state.users || []).map((user) => [user.id, user]));
   const activeWatches = getActiveWatches(state);
   const grouped = groupActiveWatchesByVenue(activeWatches);
   const venueDates = buildVenueDateTargets(grouped);
@@ -256,7 +262,9 @@ export async function runCheckCycle({
   let alertCount = 0;
   for (const notification of notifications) {
     try {
-      await notifier(buildNotificationMessage(notification.item));
+      const user = usersById.get(notification.watch.userId);
+      if (!user?.telegramChatId || user.enabled === false) continue;
+      await notifier(buildNotificationMessage(notification.item), user.telegramChatId);
       state.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
       alertCount += 1;
     } catch (error) {

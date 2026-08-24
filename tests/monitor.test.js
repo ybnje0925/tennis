@@ -15,10 +15,21 @@ function state(overrides = {}) {
     watches: [
       {
         id: "w1",
+        userId: "u1",
         venues: ["gangil"],
         date: "2026-08-29",
         times: ["18:00~20:00"],
         enabled: true
+      }
+    ],
+    users: [
+      {
+        id: "u1",
+        name: "tester",
+        telegramChatId: "chat-1",
+        telegramConnected: true,
+        enabled: true,
+        createdAt: "2026-08-24T00:00:00.000Z"
       }
     ],
     lastAvailability: {},
@@ -92,7 +103,7 @@ describe("findNotifications", () => {
 
   it("separates gangil and myeongil watches", () => {
     const current = state({
-      watches: [{ id: "w2", venues: ["myeongil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }]
+      watches: [{ id: "w2", userId: "u1", venues: ["myeongil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }]
     });
 
     expect(findNotifications(current, [slot({ venue: "gangil" })])).toHaveLength(0);
@@ -132,6 +143,7 @@ function olympicState() {
   return state({
     watches: [{
       id: "w1",
+      userId: "u1",
       provider: "olympic",
       venues: ["olympic"],
       date: "2026-08-29",
@@ -227,8 +239,8 @@ describe("runCheckCycle active watch targeting", () => {
 
   it("deduplicates a provider with multiple active watches", async () => {
     const watches = [
-      { id: "w1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
-      { id: "w2", venues: ["gangil"], date: "2026-08-30", times: ["20:00~22:00"], enabled: true }
+      { id: "w1", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "w2", userId: "u1", venues: ["gangil"], date: "2026-08-30", times: ["20:00~22:00"], enabled: true }
     ];
     const runner = makeRunner(state({ watches }));
 
@@ -240,8 +252,8 @@ describe("runCheckCycle active watch targeting", () => {
 
   it("deduplicates the same date for a provider", () => {
     const watches = [
-      { id: "w1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
-      { id: "w2", venues: ["gangil"], date: "2026-08-29", times: ["20:00~22:00"], enabled: true }
+      { id: "w1", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "w2", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["20:00~22:00"], enabled: true }
     ];
 
     expect(buildVenueDateTargets(groupActiveWatchesByVenue(watches))).toEqual({ gangil: ["2026-08-29"] });
@@ -304,6 +316,39 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
     expect(current.system.logs[0]).toContain("빈자리 1건 → 알림 1건");
+  });
+
+  it("routes notifications to the matching user's Telegram chat only", async () => {
+    const current = state({
+      users: [
+        { id: "u1", telegramChatId: "chat-a", telegramConnected: true, enabled: true },
+        { id: "u2", telegramChatId: "chat-b", telegramConnected: true, enabled: true }
+      ],
+      watches: [
+        { id: "wa", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "wb", userId: "u2", venues: ["gangil"], date: "2026-08-29", times: ["10:00~12:00"], enabled: true }
+      ]
+    });
+    const checker = vi.fn(async () => ({
+      gangil: [slot({ time: "18:00~20:00" })]
+    }));
+    const notifier = vi.fn(async () => {});
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier });
+
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier.mock.calls[0][1]).toBe("chat-a");
+  });
+
+  it("excludes disabled users from common provider checks and alerts", async () => {
+    const current = state({
+      users: [{ id: "u1", telegramChatId: "chat-a", telegramConnected: true, enabled: false }]
+    });
+    const runner = makeRunner(current);
+
+    await runCheckCycle(runner);
+
+    expect(runner.checker).not.toHaveBeenCalled();
   });
 
   it("does not check a provider before its polling interval is due", async () => {
