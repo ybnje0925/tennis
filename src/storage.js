@@ -11,6 +11,8 @@ const initialState = {
   inviteCodes: [],
   sessions: [],
   telegramLinkTokens: [],
+  deviceLinkCodes: [],
+  deviceLinkFailures: [],
   watches: [],
   lastAvailability: {},
   sentNotifications: {},
@@ -88,6 +90,20 @@ export function createRandomToken(byteLength = 32) {
   return crypto.randomBytes(byteLength).toString("base64url");
 }
 
+function createSessionForUser(state, userId) {
+  const now = new Date().toISOString();
+  const token = createRandomToken();
+  const session = {
+    tokenHash: hashToken(token),
+    userId,
+    createdAt: now,
+    lastSeenAt: now,
+    expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
+  };
+  state.sessions.push(session);
+  return { token, session };
+}
+
 export function createInviteCode() {
   const left = crypto.randomBytes(2).toString("hex").toUpperCase();
   const mid = crypto.randomBytes(2).toString("hex").toUpperCase();
@@ -127,20 +143,92 @@ export async function claimInviteCode({ code, name }) {
     enabled: true,
     createdAt: now
   };
-  const token = createRandomToken();
-  const session = {
-    tokenHash: hashToken(token),
-    userId: user.id,
-    createdAt: now,
-    lastSeenAt: now,
-    expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString()
-  };
+  const { token } = createSessionForUser(state, user.id);
 
   invite.used = true;
   invite.usedBy = user.id;
   invite.usedAt = now;
   state.users.push(user);
-  state.sessions.push(session);
+  await saveState(state);
+  return { user, token };
+}
+
+function normalizeDeviceLinkCode(code) {
+  return String(code || "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+}
+
+function formatDeviceLinkCode(value) {
+  return `${value.slice(0, 3)}-${value.slice(3)}`;
+}
+
+function createHumanDeviceCode() {
+  return formatDeviceLinkCode(String(crypto.randomInt(0, 1_000_000)).padStart(6, "0"));
+}
+
+function assertDeviceLinkRateLimit(state, rateLimitKey) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000;
+  state.deviceLinkFailures = (state.deviceLinkFailures || []).filter((item) => Date.parse(item.at) > now - windowMs);
+  const attempts = state.deviceLinkFailures.filter((item) => item.rateLimitKey === rateLimitKey);
+  if (attempts.length >= 5) {
+    throw new Error("연결 코드 입력 시도가 너무 많습니다. 잠시 후 다시 시도해주세요.");
+  }
+}
+
+function recordDeviceLinkFailure(state, rateLimitKey) {
+  state.deviceLinkFailures ||= [];
+  state.deviceLinkFailures.push({ rateLimitKey, at: new Date().toISOString() });
+}
+
+export async function createDeviceLinkCode(userId, options = {}) {
+  const state = await loadState();
+  const user = state.users.find((item) => item.id === userId);
+  if (!user || user.enabled === false) throw new Error("사용자를 찾을 수 없습니다.");
+
+  let code = createHumanDeviceCode();
+  for (let attempts = 0; attempts < 5; attempts += 1) {
+    const codeHash = hashToken(normalizeDeviceLinkCode(code));
+    if (!state.deviceLinkCodes.some((item) => !item.usedAt && item.codeHash === codeHash)) break;
+    code = createHumanDeviceCode();
+  }
+
+  const now = new Date();
+  const ttlMs = Number.isFinite(options.ttlMs) ? options.ttlMs : 10 * 60 * 1000;
+  const link = {
+    codeHash: hashToken(normalizeDeviceLinkCode(code)),
+    userId,
+    createdAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+    usedAt: null
+  };
+  state.deviceLinkCodes.push(link);
+  await saveState(state);
+  return { code, expiresAt: link.expiresAt };
+}
+
+export async function claimDeviceLinkCode({ code, rateLimitKey = "global" }) {
+  const normalizedCode = normalizeDeviceLinkCode(code);
+  const state = await loadState();
+  assertDeviceLinkRateLimit(state, rateLimitKey);
+
+  const link = state.deviceLinkCodes.find((item) => item.codeHash === hashToken(normalizedCode));
+  const expired = !link || Date.parse(link.expiresAt) <= Date.now();
+  if (expired || link.usedAt) {
+    recordDeviceLinkFailure(state, rateLimitKey);
+    await saveState(state);
+    throw new Error("유효하지 않거나 만료된 연결 코드입니다.");
+  }
+
+  const user = state.users.find((item) => item.id === link.userId);
+  if (!user || user.enabled === false) {
+    recordDeviceLinkFailure(state, rateLimitKey);
+    await saveState(state);
+    throw new Error("유효하지 않거나 만료된 연결 코드입니다.");
+  }
+
+  link.usedAt = new Date().toISOString();
+  state.deviceLinkFailures = (state.deviceLinkFailures || []).filter((item) => item.rateLimitKey !== rateLimitKey);
+  const { token } = createSessionForUser(state, user.id);
   await saveState(state);
   return { user, token };
 }
@@ -223,6 +311,8 @@ function normalizeState(raw) {
   state.inviteCodes = Array.isArray(state.inviteCodes) ? state.inviteCodes : [];
   state.sessions = Array.isArray(state.sessions) ? state.sessions : [];
   state.telegramLinkTokens = Array.isArray(state.telegramLinkTokens) ? state.telegramLinkTokens : [];
+  state.deviceLinkCodes = Array.isArray(state.deviceLinkCodes) ? state.deviceLinkCodes : [];
+  state.deviceLinkFailures = Array.isArray(state.deviceLinkFailures) ? state.deviceLinkFailures : [];
   state.lastAvailability = state.lastAvailability || {};
   state.sentNotifications = state.sentNotifications || {};
   state.system.venues = state.system.venues || {};

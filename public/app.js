@@ -2,9 +2,14 @@ const form = document.querySelector("#watchForm");
 const inviteForm = document.querySelector("#inviteForm");
 const invitePanel = document.querySelector("#invitePanel");
 const inviteStatusEl = document.querySelector("#inviteStatus");
+const showDeviceLinkButton = document.querySelector("#showDeviceLink");
+const deviceLinkClaimForm = document.querySelector("#deviceLinkClaimForm");
+const deviceLinkClaimStatusEl = document.querySelector("#deviceLinkClaimStatus");
 const appContentEl = document.querySelector("#appContent");
 const telegramPanel = document.querySelector("#telegramPanel");
 const connectTelegramButton = document.querySelector("#connectTelegram");
+const createDeviceLinkButton = document.querySelector("#createDeviceLink");
+const deviceLinkResultEl = document.querySelector("#deviceLinkResult");
 const statusEl = document.querySelector("#status");
 const watchesEl = document.querySelector("#watches");
 const timeSlotsEl = document.querySelector("#timeSlots");
@@ -53,6 +58,10 @@ function setStatus(message) {
 
 function setInviteStatus(message) {
   inviteStatusEl.textContent = message;
+}
+
+function setDeviceLinkClaimStatus(message) {
+  deviceLinkClaimStatusEl.textContent = message;
 }
 
 function formatDateTime(value) {
@@ -225,12 +234,50 @@ inviteForm.addEventListener("submit", async (event) => {
   }
 });
 
+showDeviceLinkButton.addEventListener("click", () => {
+  deviceLinkClaimForm.classList.toggle("hidden");
+  setDeviceLinkClaimStatus("");
+});
+
+deviceLinkClaimForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(deviceLinkClaimForm);
+  try {
+    await request("/api/device-link/claim", {
+      method: "POST",
+      body: JSON.stringify({ code: data.get("code") })
+    });
+    deviceLinkClaimForm.reset();
+    setDeviceLinkClaimStatus("");
+    await bootApp();
+  } catch (error) {
+    setDeviceLinkClaimStatus(error.message);
+  }
+});
+
 connectTelegramButton.addEventListener("click", async () => {
   try {
     const result = await request("/api/telegram/link-token", { method: "POST", body: "{}" });
     window.open(result.url, "_blank", "noopener,noreferrer");
     setStatus("Telegram에서 /start 메시지를 보낸 뒤 잠시 후 화면을 새로고침합니다.");
     setTimeout(bootApp, 5000);
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
+createDeviceLinkButton.addEventListener("click", async () => {
+  try {
+    const result = await request("/api/device-link", { method: "POST", body: "{}" });
+    deviceLinkResultEl.classList.remove("hidden");
+    deviceLinkResultEl.innerHTML = "";
+    const label = document.createElement("p");
+    label.textContent = "다른 기기에서 아래 코드를 입력하세요.";
+    const code = document.createElement("strong");
+    code.textContent = result.code;
+    const expiry = document.createElement("p");
+    expiry.textContent = "10분 동안 사용할 수 있습니다. 한 번 사용하면 자동으로 만료됩니다.";
+    deviceLinkResultEl.append(label, code, expiry);
   } catch (error) {
     setStatus(error.message);
   }

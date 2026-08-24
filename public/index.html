@@ -23,6 +23,17 @@
           <button type="submit" class="primary">시작하기</button>
           <p id="inviteStatus" role="status"></p>
         </form>
+        <div class="divider-text">이미 사용 중이신가요?</div>
+        <button id="showDeviceLink" type="button">기존 계정 연결하기</button>
+        <form id="deviceLinkClaimForm" class="device-link-form hidden">
+          <p>다른 기기에서 만든 연결 코드를 입력하세요.</p>
+          <label class="date-field">
+            <span>연결 코드</span>
+            <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="000-000" required />
+          </label>
+          <button type="submit" class="primary">연결하기</button>
+          <p id="deviceLinkClaimStatus" role="status"></p>
+        </form>
       </section>
 
       <div id="appContent" class="hidden">
@@ -34,6 +45,12 @@
           <h2>텔레그램 알림 연결</h2>
           <p>텔레그램 알림을 연결해주세요.</p>
           <button id="connectTelegram" type="button">텔레그램 연결하기</button>
+        </section>
+
+        <section id="devicePanel" class="panel">
+          <h2>다른 기기에서도 사용하기</h2>
+          <button id="createDeviceLink" type="button">기기 연결 코드 만들기</button>
+          <div id="deviceLinkResult" class="device-link-result hidden" aria-live="polite"></div>
         </section>
 
         <section class="status-panel" aria-live="polite">

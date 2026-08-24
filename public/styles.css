@@ -212,6 +212,37 @@ button.primary {
   color: #3f5a44;
 }
 
+.divider-text {
+  margin: 18px 0 10px;
+  color: #617064;
+  font-size: 14px;
+  text-align: center;
+}
+
+.device-link-form {
+  margin-top: 14px;
+}
+
+.device-link-result {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #fbfcfb;
+}
+
+.device-link-result p {
+  margin: 0 0 8px;
+  color: #617064;
+}
+
+.device-link-result strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
 .watch-list {
   display: grid;
   gap: 10px;

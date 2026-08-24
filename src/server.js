@@ -6,7 +6,9 @@ import { OLYMPIC_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.j
 import {
   addWatch,
   claimInviteCode,
+  claimDeviceLinkCode,
   connectTelegramLinkToken,
+  createDeviceLinkCode,
   createTelegramLinkToken,
   deleteWatch,
   getUserBySessionToken,
@@ -90,6 +92,10 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function rateLimitKeyFor(req) {
+  return String(req.headers["x-forwarded-for"] || req.ip || "unknown").split(",")[0].trim();
+}
+
 app.get("/health", (req, res) => {
   res.json({ ok: true });
 });
@@ -122,6 +128,26 @@ app.post("/api/invite/claim", async (req, res, next) => {
   try {
     const { code, name } = req.body || {};
     const { user, token } = await claimInviteCode({ code, name });
+    setSessionCookie(res, token);
+    res.status(201).json({ user: publicUser(user) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/device-link", requireUser, async (req, res, next) => {
+  try {
+    const result = await createDeviceLinkCode(req.user.id);
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/device-link/claim", async (req, res, next) => {
+  try {
+    const { code } = req.body || {};
+    const { user, token } = await claimDeviceLinkCode({ code, rateLimitKey: rateLimitKeyFor(req) });
     setSessionCookie(res, token);
     res.status(201).json({ user: publicUser(user) });
   } catch (error) {
