@@ -1,6 +1,8 @@
 import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
 import { VENUES } from "./constants.js";
 import { parseReservationDom } from "./parser.js";
+import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
+import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
 import { fileURLToPath } from "node:url";
 
 export async function checkVenue(page, venueId) {
@@ -21,20 +23,40 @@ export async function checkVenue(page, venueId) {
   return reservations;
 }
 
-export async function checkAllVenues() {
+export async function checkGangdongVenues(venueIds) {
+  const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "gangdong");
+  if (ids.length === 0) return {};
+
   const { context, page } = await openGangdongSession();
   try {
     const loggedIn = await ensureLoggedIn(page);
     if (!loggedIn) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
 
     const result = {};
-    for (const venueId of Object.keys(VENUES)) {
+    for (const venueId of ids) {
       result[venueId] = await checkVenue(page, venueId);
     }
     return result;
   } finally {
     await context.close();
   }
+}
+
+export async function checkAllVenues(options = {}) {
+  const watches = options.watches || [];
+  const watchedVenueIds = new Set(
+    watches.length > 0
+      ? watches.flatMap((watch) => watch.venues || (watch.venue ? [watch.venue] : []))
+      : Object.keys(VENUES).filter((venueId) => VENUES[venueId].provider !== "olympic")
+  );
+
+  const result = await checkGangdongVenues(Array.from(watchedVenueIds));
+  Object.assign(result, await checkSongpaVenues(songpaVenueIdsFromWatches(watches)));
+  const olympicWatches = watches.filter(isOlympicWatch);
+  if (olympicWatches.length > 0) {
+    result.olympic = await checkOlympicByWatches(olympicWatches);
+  }
+  return result;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

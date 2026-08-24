@@ -2,9 +2,10 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
-import { TIME_SLOTS, VENUES } from "./constants.js";
+import { OLYMPIC_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
 import { addWatch, deleteWatch, loadState, saveState, updateWatch } from "./storage.js";
 import { runCheckCycle, startScheduler } from "./monitor.js";
+import { validateVenueSelection } from "./venueRules.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,8 +19,14 @@ app.get("/health", (req, res) => {
 
 app.get("/api/options", (req, res) => {
   res.json({
-    venues: Object.values(VENUES).map(({ id, name }) => ({ id, name })),
+    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes }) => ({ id, name, provider, slotMinutes })),
+    venueGroups: {
+      twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes }) => ({ id, name, slotMinutes })),
+      oneHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 60).map(({ id, name, slotMinutes }) => ({ id, name, slotMinutes }))
+    },
+    providers: PROVIDERS,
     timeSlots: TIME_SLOTS,
+    olympicTimeSlots: OLYMPIC_TIME_SLOTS,
     enableTestTools: config.enableTestTools
   });
 });
@@ -45,10 +52,25 @@ app.get("/api/status", async (req, res, next) => {
 app.post("/api/watches", async (req, res, next) => {
   try {
     const { venues, date, times } = req.body;
-    if (!Array.isArray(venues) || venues.length === 0) throw new Error("테니스장을 선택하세요.");
+    const venueValidation = validateVenueSelection(venues);
+    if (!venueValidation.ok) throw new Error(venueValidation.message);
     if (!date) throw new Error("날짜를 선택하세요.");
-    if (!Array.isArray(times) || times.length === 0) throw new Error("시간대를 선택하세요.");
-    const watch = await addWatch({ venues, date, times });
+    const includesOlympic = venues.includes("olympic");
+    if (includesOlympic) {
+      if (!Array.isArray(times) || times.length === 0) throw new Error("올림픽공원 시간대를 선택하세요.");
+      for (const time of times) {
+        if (!OLYMPIC_TIME_SLOTS.includes(time)) throw new Error("올림픽공원 시간대 형식이 올바르지 않습니다.");
+      }
+    } else if (!Array.isArray(times) || times.length === 0) {
+      throw new Error("시간대를 선택하세요.");
+    }
+    const watch = await addWatch({
+      provider: includesOlympic ? "olympic" : "gangdong",
+      venue: includesOlympic ? "olympic" : undefined,
+      venues,
+      date,
+      times
+    });
     const immediate = await runCheckCycle().catch((error) => ({ errors: [error.message] }));
     res.status(201).json({ watch, immediate });
   } catch (error) {

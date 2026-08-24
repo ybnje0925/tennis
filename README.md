@@ -19,6 +19,10 @@ copy .env.example .env
 ```env
 GANGDONG_USER_ID=
 GANGDONG_USER_PASSWORD=
+OLYMPIC_USER_ID=
+OLYMPIC_USER_PASSWORD=
+SONGPA_USER_ID=
+SONGPA_USER_PASSWORD=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 HEADLESS=true
@@ -39,6 +43,7 @@ npm start
 ```bash
 npm run check
 npm run diagnose:headless
+npm run diagnose:songpa
 ```
 
 서버 실행 중에는 등록된 알림 조건을 기준으로 10분마다 자동 조회합니다. 같은 주기에 강일/명일 예약현황은 각각 1회만 조회하고, 가져온 결과를 모든 조건과 비교합니다.
@@ -117,6 +122,10 @@ Railway는 루트의 `Dockerfile`과 `railway.json`을 사용합니다.
 ```env
 GANGDONG_USER_ID=
 GANGDONG_USER_PASSWORD=
+OLYMPIC_USER_ID=
+OLYMPIC_USER_PASSWORD=
+SONGPA_USER_ID=
+SONGPA_USER_PASSWORD=
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 HEADLESS=true
@@ -124,6 +133,15 @@ ENABLE_TEST_TOOLS=false
 CHECK_INTERVAL_MINUTES=10
 RAILWAY_RUN_UID=0
 ```
+
+송파구시설관리공단 연동을 사용하려면 Railway Variables에 다음 값을 추가하세요.
+
+```text
+SONGPA_USER_ID = 실제 송파 아이디
+SONGPA_USER_PASSWORD = 실제 송파 비밀번호
+```
+
+기존 `GANGDONG_USER_ID`, `GANGDONG_USER_PASSWORD`, `OLYMPIC_USER_ID`, `OLYMPIC_USER_PASSWORD`와 독립적으로 관리합니다.
 
 알림 조건과 세션을 유지하려면 Railway Volume을 서비스에 연결하고 mount path를 `/data`로 설정합니다. Docker 기본 저장 경로가 `/data/data`, `/data/sessions`이므로 이 Volume에 상태와 세션이 저장됩니다.
 

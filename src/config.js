@@ -13,6 +13,10 @@ const int = (value, fallback) => {
 export const config = {
   gangdongUserId: process.env.GANGDONG_USER_ID || "",
   gangdongUserPassword: process.env.GANGDONG_USER_PASSWORD || "",
+  olympicUserId: process.env.OLYMPIC_USER_ID || "",
+  olympicUserPassword: process.env.OLYMPIC_USER_PASSWORD || "",
+  songpaUserId: process.env.SONGPA_USER_ID || "",
+  songpaUserPassword: process.env.SONGPA_USER_PASSWORD || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
   dataDir: process.env.DATA_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/data` : "data"),
@@ -26,5 +30,17 @@ export const config = {
 export function assertLoginConfig() {
   if (!config.gangdongUserId || !config.gangdongUserPassword) {
     throw new Error("GANGDONG_USER_ID and GANGDONG_USER_PASSWORD are required for live checks.");
+  }
+}
+
+export function assertOlympicLoginConfig() {
+  if (!config.olympicUserId || !config.olympicUserPassword) {
+    throw new Error("OLYMPIC_USER_ID and OLYMPIC_USER_PASSWORD are required for Olympic live checks.");
+  }
+}
+
+export function assertSongpaLoginConfig() {
+  if (!config.songpaUserId || !config.songpaUserPassword) {
+    throw new Error("SONGPA_USER_ID and SONGPA_USER_PASSWORD are required for Songpa live checks.");
   }
 }
