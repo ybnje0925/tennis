@@ -44,7 +44,7 @@ export const VENUES = {
   olympic: {
     id: "olympic",
     name: "올림픽공원 테니스장",
-    url: "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do",
+    url: "https://www.ksponco.or.kr/online/tennis/index.do",
     provider: "olympic",
     slotMinutes: 60
   }
