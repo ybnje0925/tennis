@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 
 const openGangdongSession = vi.fn();
+const parseReservationDom = vi.fn(async () => [
+  {
+    venue: "gangil",
+    venueName: "강일테니스장",
+    date: "2026-08-29",
+    time: "18:00~20:00",
+    available: false,
+    availableCount: 0
+  },
+  {
+    venue: "gangil",
+    venueName: "강일테니스장",
+    date: "2026-08-30",
+    time: "18:00~20:00",
+    available: false,
+    availableCount: 0
+  }
+]);
 
 vi.mock("../src/browserSession.js", () => ({
   openGangdongSession,
@@ -9,24 +27,7 @@ vi.mock("../src/browserSession.js", () => ({
 }));
 
 vi.mock("../src/parser.js", () => ({
-  parseReservationDom: vi.fn(async () => [
-    {
-      venue: "gangil",
-      venueName: "강일테니스장",
-      date: "2026-08-29",
-      time: "18:00~20:00",
-      available: false,
-      availableCount: 0
-    },
-    {
-      venue: "gangil",
-      venueName: "강일테니스장",
-      date: "2026-08-30",
-      time: "18:00~20:00",
-      available: false,
-      availableCount: 0
-    }
-  ])
+  parseReservationDom
 }));
 
 const { checkAllVenues, runProviderCheck } = await import("../src/checker.js");
@@ -67,6 +68,32 @@ describe("checkAllVenues targeting", () => {
     expect(result.gangil).toHaveLength(1);
     expect(result.gangil[0].date).toBe("2026-08-29");
     expect(page.goto).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies a missing target date as a parser error instead of zero vacancies", async () => {
+    const context = { close: vi.fn() };
+    const page = {
+      goto: vi.fn(),
+      waitForLoadState: vi.fn(async () => {})
+    };
+    openGangdongSession.mockResolvedValueOnce({ context, page });
+    parseReservationDom.mockResolvedValueOnce([
+      {
+        venue: "gangil",
+        venueName: "강일테니스장",
+        date: "2026-08-28",
+        time: "06:00~08:00",
+        available: false,
+        availableCount: 0
+      }
+    ]);
+
+    const result = await checkAllVenues({
+      watches: [{ id: "w1", venues: ["gangil"], date: "2026-08-27", times: ["06:00~08:00"], enabled: true }]
+    });
+
+    expect(result.gangil).toBeUndefined();
+    expect(result[Symbol.for("tennis.checkMeta")].errors[0].message).toContain("TARGET_DATE_NOT_PARSED");
   });
 
   it("deduplicates live venue checks across users", async () => {

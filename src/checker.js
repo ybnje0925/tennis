@@ -2,6 +2,7 @@ import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from 
 import { PROVIDERS, VENUES } from "./constants.js";
 import { config } from "./config.js";
 import { parseReservationDom } from "./parser.js";
+import { normalizeDate } from "./normalization.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
 import { fileURLToPath } from "node:url";
@@ -26,7 +27,12 @@ export async function checkVenue(page, venueId, options = {}) {
   }
 
   if (!options.dates || options.dates.length === 0) return reservations;
-  const neededDates = new Set(options.dates);
+  const neededDates = new Set(options.dates.map((date) => normalizeDate(date)).filter(Boolean));
+  const parsedDates = new Set(reservations.map((item) => item.date));
+  const missingDates = Array.from(neededDates).filter((date) => !parsedDates.has(date));
+  if (missingDates.length > 0) {
+    throw new Error(`TARGET_DATE_NOT_PARSED: ${venue.name} 대상날짜 파싱 실패 (${missingDates.join(", ")})`);
+  }
   return reservations.filter((item) => neededDates.has(item.date));
 }
 
@@ -137,8 +143,10 @@ export function buildVenueDateTargets(watches) {
   for (const watch of watches) {
     if (watch.enabled !== true) continue;
     for (const venueId of watch.venues || []) {
+      const date = normalizeDate(watch.date);
+      if (!date) continue;
       if (!targets[venueId]) targets[venueId] = new Set();
-      targets[venueId].add(watch.date);
+      targets[venueId].add(date);
     }
   }
   return Object.fromEntries(

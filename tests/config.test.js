@@ -72,4 +72,20 @@ describe("provider polling minutes config", () => {
     expect(config.providerPollingMinutes.songpa).toBe(8);
     expect(config.providerPollingMinutes.olympic).toBe(10);
   });
+
+  it("prefers provider-specific 5 minute env vars over CHECK_INTERVAL_MINUTES=10", async () => {
+    const { config } = await loadConfigWith({
+      CHECK_INTERVAL_MINUTES: "10",
+      GANGDONG_POLLING_MINUTES: "5",
+      SONGPA_POLLING_MINUTES: "5",
+      OLYMPIC_POLLING_MINUTES: "5"
+    });
+
+    expect(config.checkIntervalMinutes).toBe(10);
+    expect(config.providerPollingMinutes).toEqual({
+      gangdong: 5,
+      songpa: 5,
+      olympic: 5
+    });
+  });
 });

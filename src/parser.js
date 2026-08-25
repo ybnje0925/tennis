@@ -1,20 +1,8 @@
 import { TIME_SLOTS, VENUES } from "./constants.js";
+import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 
 export function parseKoreanDate(text, fallbackYear = new Date().getFullYear()) {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  const full = normalized.match(/(20\d{2})[-./년\s]+([01]?\d)[-./월\s]+([0-3]?\d)/);
-  if (full) return toIsoDate(full[1], full[2], full[3]);
-  const short = normalized.match(/([01]?\d)[-./월\s]+([0-3]?\d)/);
-  if (short) return toIsoDate(fallbackYear, short[1], short[2]);
-  return null;
-}
-
-function toIsoDate(year, month, day) {
-  return [
-    String(year).padStart(4, "0"),
-    String(month).padStart(2, "0"),
-    String(day).padStart(2, "0")
-  ].join("-");
+  return normalizeDate(text, fallbackYear);
 }
 
 function parseAvailableCount(text) {
@@ -26,22 +14,49 @@ function parseAvailableCount(text) {
 
 export async function parseReservationDom(page, venueId) {
   const calendarItems = await page.evaluate((venue) => {
-    const pageText = document.body.innerText || "";
-    const yearMonth = pageText.match(/(20\d{2})\s*\.\s*([01]?\d)/);
-    if (!yearMonth) return [];
+    const normalizeSpaces = (value) => (value || "").replace(/\s+/g, " ").trim();
+    const parseYearMonth = (text) => {
+      const match = normalizeSpaces(text).match(/(20\d{2})\s*(?:[.\-/년])\s*([01]?\d)\s*(?:월)?/);
+      if (!match) return null;
+      const monthNumber = Number.parseInt(match[2], 10);
+      if (monthNumber < 1 || monthNumber > 12) return null;
+      return { year: match[1], month: String(monthNumber).padStart(2, "0") };
+    };
+    const findYearMonth = (cell) => {
+      const calendar = cell.closest(".calendar1_table");
+      const table = cell.closest("table");
+      const containers = [
+        calendar?.parentElement,
+        calendar,
+        table?.caption,
+        table?.closest(".calendar, .calendar_wrap, .cal_wrap, .reservation, .rent, .contents, form, section, article, div"),
+        table
+      ].filter(Boolean);
 
-    const year = yearMonth[1];
-    const month = yearMonth[2].padStart(2, "0");
-    const cells = Array.from(document.querySelectorAll(".calendar1_table td, table td"));
+      for (const element of containers) {
+        const text = normalizeSpaces(element.innerText || element.textContent || "");
+        const yearMonth = parseYearMonth(text);
+        if (yearMonth) return yearMonth;
+      }
+      return null;
+    };
+
+    const calendarCells = Array.from(document.querySelectorAll(".calendar1_table td"));
+    const cells = calendarCells.length > 0
+      ? calendarCells
+      : Array.from(document.querySelectorAll("table td"));
 
     return cells.flatMap((cell) => {
-      const cellText = (cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim();
+      const yearMonth = findYearMonth(cell);
+      if (!yearMonth) return [];
+
+      const cellText = normalizeSpaces(cell.innerText || cell.textContent || "");
       const day = cellText.match(/^([0-3]?\d)\b/)?.[1];
       if (!day) return [];
 
       return Array.from(cell.querySelectorAll("li")).flatMap((item) => {
-        const text = (item.innerText || item.textContent || "").replace(/\s+/g, " ").trim();
-        const slot = text.match(/([0-2]\d:00\s*~\s*[0-2]\d:00)/)?.[1]?.replace(/\s+/g, "");
+        const text = normalizeSpaces(item.innerText || item.textContent || "");
+        const slot = text.match(/\b[0-2]?\d:?[0-5]?\d?\s*~\s*[0-2]?\d:?[0-5]?\d?\b/)?.[0];
         const status = text.match(/예약가능|예약완료/)?.[0];
         if (!slot || !status) return [];
 
@@ -49,7 +64,7 @@ export async function parseReservationDom(page, venueId) {
         const available = status === "예약가능";
         return {
           venue,
-          date: `${year}-${month}-${day.padStart(2, "0")}`,
+          date: `${yearMonth.year}-${yearMonth.month}-${day.padStart(2, "0")}`,
           time: slot,
           available,
           availableCount: available && count ? Number.parseInt(count, 10) : 0
@@ -90,9 +105,10 @@ export function parseReservationTexts(texts, venueId, fallbackYear = new Date().
     if (date) currentDate = date;
 
     for (const slot of TIME_SLOTS) {
+      const normalizedSlot = normalizeTimeSlot(text);
       const compactSlot = slot.replace(/:00/g, "");
       const compactText = text.replace(/\s/g, "");
-      const hasSlot = text.includes(slot) || compactText.includes(compactSlot);
+      const hasSlot = normalizedSlot === slot || text.includes(slot) || compactText.includes(compactSlot);
       const hasStatus = /예약가능|예약완료/.test(text);
       if (!hasSlot || !hasStatus) continue;
 
@@ -119,15 +135,30 @@ function normalizeReservations(items, venueId) {
   const map = new Map();
 
   for (const item of items) {
-    map.set(`${item.venue}|${item.date}|${item.time}`, {
+    const normalized = {
       venue: venue.id,
       venueName: venue.name,
-      date: item.date,
-      time: item.time,
+      date: normalizeDate(item.date),
+      time: normalizeTimeSlot(item.time),
       available: item.available,
       availableCount: item.available ? item.availableCount : 0
-    });
+    };
+    if (!normalized.date || !normalized.time) continue;
+
+    const key = reservationKey(normalized);
+    const previous = map.get(key);
+    map.set(key, previous ? mergeReservation(previous, normalized) : normalized);
   }
 
   return Array.from(map.values()).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+}
+
+function mergeReservation(previous, next) {
+  const available = previous.available || next.available;
+  return {
+    ...previous,
+    ...next,
+    available,
+    availableCount: available ? Math.max(previous.availableCount || 0, next.availableCount || 0) : 0
+  };
 }

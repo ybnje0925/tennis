@@ -7,9 +7,11 @@ import {
   isProviderDue,
   keyFor,
   nextFixedSlotAt,
-  runCheckCycle
+  runCheckCycle,
+  syncProviderSchedule
 } from "../src/monitor.js";
 import { CHECK_META } from "../src/checker.js";
+import { PROVIDERS } from "../src/constants.js";
 
 function state(overrides = {}) {
   return {
@@ -102,6 +104,26 @@ describe("findNotifications", () => {
     expect(findNotifications(state(), [slot({ time: "20:00~22:00" })])).toHaveLength(0);
   });
 
+  it("matches canonicalized watch and reservation keys", () => {
+    const current = state({
+      watches: [{
+        id: "w1",
+        userId: "u1",
+        venues: ["gangil"],
+        date: "2026-8-27",
+        times: ["6:00 ~ 8:00"],
+        enabled: true
+      }]
+    });
+
+    const notifications = findNotifications(current, [
+      slot({ date: "2026-08-27", time: "06:00~08:00" })
+    ]);
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].key).toBe("gangil|2026-08-27|06:00~08:00");
+  });
+
   it("separates gangil and myeongil watches", () => {
     const current = state({
       watches: [{ id: "w2", userId: "u1", venues: ["myeongil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }]
@@ -169,6 +191,29 @@ function olympicSlot() {
     durationMinutes: 60,
     available: true
   };
+}
+
+function withProviderPolling(values, callback) {
+  const previous = Object.fromEntries(
+    Object.keys(values).map((providerId) => [providerId, PROVIDERS[providerId].pollingMinutes])
+  );
+  for (const [providerId, pollingMinutes] of Object.entries(values)) {
+    PROVIDERS[providerId].pollingMinutes = pollingMinutes;
+  }
+  const restore = () => {
+    for (const [providerId, pollingMinutes] of Object.entries(previous)) {
+      PROVIDERS[providerId].pollingMinutes = pollingMinutes;
+    }
+  };
+  try {
+    const result = callback();
+    if (result && typeof result.then === "function") return result.finally(restore);
+    restore();
+    return result;
+  } catch (error) {
+    restore();
+    throw error;
+  }
 }
 
 describe("runCheckCycle active watch targeting", () => {
@@ -469,6 +514,31 @@ describe("runCheckCycle active watch targeting", () => {
 
     expect(checker).toHaveBeenCalledTimes(1);
   });
+
+  it("does not mark a provider as successful in logs when it was not due or checked", async () => {
+    const current = state({
+      watches: [
+        { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "o", userId: "u1", provider: "olympic", venues: ["olympic"], date: "2026-08-29", times: ["18:00~19:00"], enabled: true }
+      ]
+    });
+    const checker = vi.fn(async ({ watches }) => {
+      expect(watches.map((watch) => watch.id).sort()).toEqual(["g", "s"]);
+      return {
+        gangil: [slot({ available: false, availableCount: 0 })],
+        "songpa-oryun": [slot({ venue: "songpa-oryun", venueName: "오륜테니스장", available: false, availableCount: 0 })]
+      };
+    });
+
+    await withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, async () => {
+      await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-24T17:55:00.000Z") });
+
+      expect(current.system.logs[0]).toContain("강동 1/1✓");
+      expect(current.system.logs[0]).toContain("송파 1/1✓");
+      expect(current.system.logs[0]).not.toContain("올림픽✓");
+    });
+  });
 });
 
 describe("isProviderDue", () => {
@@ -476,30 +546,106 @@ describe("isProviderDue", () => {
     const at1910 = new Date("2026-08-24T10:10:00.000Z");
     const at1915 = new Date("2026-08-24T10:15:00.000Z");
 
-    expect(isProviderDue({
-      id: "gangdong",
-      pollingMinutes: 5
-    }, at1910)).toBe(true);
-    expect(isProviderDue({
-      id: "songpa",
-      pollingMinutes: 5
-    }, at1910)).toBe(true);
-    expect(isProviderDue({
-      id: "olympic",
-      pollingMinutes: 10
-    }, at1910)).toBe(true);
-    expect(isProviderDue({
-      id: "gangdong",
-      pollingMinutes: 5
-    }, at1915)).toBe(true);
-    expect(isProviderDue({
-      id: "songpa",
-      pollingMinutes: 5
-    }, at1915)).toBe(true);
-    expect(isProviderDue({
-      id: "olympic",
-      pollingMinutes: 10
-    }, at1915)).toBe(false);
+    withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, () => {
+      expect(isProviderDue({ id: "gangdong", pollingMinutes: 10 }, at1910)).toBe(true);
+      expect(isProviderDue({ id: "songpa", pollingMinutes: 10 }, at1910)).toBe(true);
+      expect(isProviderDue({ id: "olympic", pollingMinutes: 5 }, at1910)).toBe(true);
+      expect(isProviderDue({ id: "gangdong", pollingMinutes: 10 }, at1915)).toBe(true);
+      expect(isProviderDue({ id: "songpa", pollingMinutes: 10 }, at1915)).toBe(true);
+      expect(isProviderDue({ id: "olympic", pollingMinutes: 5 }, at1915)).toBe(false);
+    });
+  });
+
+  it("runs all 5-minute providers on 00/05/10/15 wall-clock slots", () => {
+    withProviderPolling({ gangdong: 5, songpa: 5, olympic: 5 }, () => {
+      for (const providerId of ["gangdong", "songpa", "olympic"]) {
+        expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:00:00.000Z"))).toBe(true);
+        expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:05:00.000Z"))).toBe(true);
+        expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:10:00.000Z"))).toBe(true);
+        expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:11:00.000Z"))).toBe(false);
+      }
+    });
+  });
+});
+
+describe("syncProviderSchedule", () => {
+  it("sets nextCheckAt to 5 minutes after a 17:50 check slot", () => {
+    const current = state();
+
+    withProviderPolling({ gangdong: 5 }, () => {
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+    });
+
+    expect(current.system.providers.gangdong.pollingMinutes).toBe(5);
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+  });
+
+  it("sets nextCheckAt to 18:00 after a 17:55 check slot", () => {
+    const current = state();
+
+    withProviderPolling({ gangdong: 5 }, () => {
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:55:00.000Z"));
+    });
+
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
+  });
+
+  it("overwrites stale state polling and stale nextCheckAt from current runtime provider config", () => {
+    const current = state({
+      system: {
+        lastCheckedAt: null,
+        nextCheckAt: "2026-08-24T18:00:00.000Z",
+        venues: {},
+        logs: [],
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: true,
+            pollingMinutes: 10,
+            lastCheckedAt: "2026-08-24T17:50:00.000Z",
+            nextCheckAt: "2026-08-24T18:00:00.000Z"
+          }
+        }
+      }
+    });
+
+    withProviderPolling({ gangdong: 5 }, () => {
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+    });
+
+    expect(current.system.providers.gangdong.pollingMinutes).toBe(5);
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+  });
+
+  it("tracks mixed provider polling independently and avoids a misleading aggregate next time", () => {
+    const current = state();
+
+    withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, () => {
+      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T17:45:00.000Z"));
+
+      expect(current.system.providers.gangdong).toMatchObject({
+        pollingMinutes: 5,
+        nextCheckAt: "2026-08-24T17:50:00.000Z"
+      });
+      expect(current.system.providers.songpa).toMatchObject({
+        pollingMinutes: 5,
+        nextCheckAt: "2026-08-24T17:50:00.000Z"
+      });
+      expect(current.system.providers.olympic).toMatchObject({
+        pollingMinutes: 10,
+        nextCheckAt: "2026-08-24T17:50:00.000Z"
+      });
+      expect(current.system.nextCheckAt).toBe("2026-08-24T17:50:00.000Z");
+
+      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T17:50:00.000Z"));
+      expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+      expect(current.system.providers.songpa.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+      expect(current.system.providers.olympic.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
+      expect(current.system.nextCheckAt).toBeNull();
+    });
   });
 });
 

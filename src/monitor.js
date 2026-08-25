@@ -9,12 +9,13 @@ import {
   isOlympicWatch,
   olympicKeyFor
 } from "./providers/olympicProvider.js";
+import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 
 const inFlightProviders = new Set();
 
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
-  return `${item.venue}|${item.date}|${item.time}`;
+  return reservationKey(item);
 }
 
 function availabilityValue(value) {
@@ -47,7 +48,10 @@ export function groupActiveWatchesByVenue(watches) {
 export function buildVenueDateTargets(grouped) {
   return Object.fromEntries(
     Object.entries(grouped)
-      .map(([venueId, watches]) => [venueId, Array.from(new Set(watches.map((watch) => watch.date))).sort()])
+      .map(([venueId, watches]) => [
+        venueId,
+        Array.from(new Set(watches.map((watch) => normalizeDate(watch.date)).filter(Boolean))).sort()
+      ])
       .filter(([, dates]) => dates.length > 0)
   );
 }
@@ -81,7 +85,7 @@ export function findNotifications(state, reservations) {
 
     for (const venue of watch.venues) {
       for (const time of watch.times) {
-        const key = `${venue}|${watch.date}|${time}`;
+        const key = reservationKey({ venue, date: watch.date, time });
         const item = byKey.get(key);
         if (!item || !item.available) continue;
 
@@ -124,12 +128,16 @@ export function fixedSlotKey(date = new Date()) {
   return slot.toISOString();
 }
 
+export function providerPollingMinutes(providerId) {
+  return PROVIDERS[providerId]?.pollingMinutes || 5;
+}
+
 export function isProviderDue(providerState, now = new Date()) {
-  const pollingMinutes = providerState.pollingMinutes || PROVIDERS[providerState.id]?.pollingMinutes || 5;
+  const pollingMinutes = providerPollingMinutes(providerState.id);
   return now.getUTCMinutes() % pollingMinutes === 0;
 }
 
-export function nextFixedSlotAt(date = new Date(), pollingMinutes = config.checkIntervalMinutes) {
+export function nextFixedSlotAt(date = new Date(), pollingMinutes = 5) {
   const next = new Date(date);
   const minutes = next.getUTCMinutes();
   let addMinutes = (pollingMinutes - (minutes % pollingMinutes)) % pollingMinutes;
@@ -154,7 +162,7 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
 
   for (const providerId of Object.keys(PROVIDERS)) {
     const previous = state.system.providers[providerId] || {};
-    const pollingMinutes = PROVIDERS[providerId].pollingMinutes;
+    const pollingMinutes = providerPollingMinutes(providerId);
     const lastCheckedAt = previous.lastCheckedAt || null;
     state.system.providers[providerId] = {
       id: providerId,
@@ -166,24 +174,20 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
     };
   }
 
-  state.system.lastCheckedAt = latestProviderTime(state.system.providers, "lastCheckedAt");
-  state.system.nextCheckAt = earliestActiveProviderTime(state.system.providers);
+  state.system.lastCheckedAt = commonActiveProviderTime(state.system.providers, "lastCheckedAt");
+  state.system.nextCheckAt = commonActiveProviderTime(state.system.providers, "nextCheckAt");
 }
 
-function latestProviderTime(providers, key) {
-  const values = Object.values(providers || {}).map((item) => item[key]).filter(Boolean).sort();
-  return values.at(-1) || null;
-}
-
-function earliestActiveProviderTime(providers) {
+function commonActiveProviderTime(providers, key) {
   const values = Object.values(providers || {})
-    .filter((item) => item.active && item.nextCheckAt)
-    .map((item) => item.nextCheckAt)
+    .filter((item) => item.active && item[key])
+    .map((item) => item[key])
     .sort();
-  return values[0] || null;
+  if (values.length === 0) return null;
+  return values.every((value) => value === values[0]) ? values[0] : null;
 }
 
-export function nextRunAt(date = new Date(), minuteStep = config.checkIntervalMinutes) {
+export function nextRunAt(date = new Date(), minuteStep = 5) {
   return nextFixedSlotAt(date, minuteStep);
 }
 
@@ -343,7 +347,7 @@ function updateCheckedProviderSchedule(state, venueIds, checkedAt) {
     state.system.providers[providerId] = {
       ...(state.system.providers[providerId] || {}),
       id: providerId,
-      pollingMinutes: PROVIDERS[providerId]?.pollingMinutes || 5,
+      pollingMinutes: providerPollingMinutes(providerId),
       lastCheckedAt: checkedAt
     };
   }
@@ -395,6 +399,7 @@ function providerSummary(providerId, venueIds, checked, errors) {
 }
 
 function shortReason(message = "조회 실패") {
+  if (/TARGET_DATE_NOT_PARSED|대상날짜 파싱 실패/.test(message)) return "대상날짜 파싱 실패";
   if (/date selector|날짜/.test(message)) return "날짜조회 실패";
   if (/login|로그인/i.test(message)) return "로그인 실패";
   if (/중복|duplicate/i.test(message)) return "중복접속";
@@ -416,7 +421,7 @@ export function countMatchingAvailableItems(state, reservations) {
 
     for (const venue of watch.venues || []) {
       for (const time of watch.times || []) {
-        const key = `${venue}|${watch.date}|${time}`;
+        const key = reservationKey({ venue, date: watch.date, time });
         const item = byKey.get(key);
         if (item?.available) matches.add(key);
       }
@@ -431,7 +436,8 @@ function normalizeOlympicWatch(watch) {
     ...watch,
     provider: "olympic",
     venue: "olympic",
-    times: watch.times || [],
+    date: normalizeDate(watch.date) || watch.date,
+    times: (watch.times || []).map((time) => normalizeTimeSlot(time) || time),
   };
 }
 

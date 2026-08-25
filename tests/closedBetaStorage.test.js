@@ -120,6 +120,31 @@ describe("closed beta storage", () => {
     expect((await loadState()).watches.filter((item) => item.userId === pc.user.id)).toHaveLength(0);
   });
 
+  it("serializes concurrent watch writes without losing either update", async () => {
+    const { addWatch, loadState } = await loadStorage();
+
+    await Promise.all([
+      addWatch({
+        userId: "u1",
+        venues: ["gangil"],
+        date: "2026-8-27",
+        times: ["6:00 ~ 8:00"],
+        provider: "gangdong"
+      }),
+      addWatch({
+        userId: "u1",
+        venues: ["gangil"],
+        date: "2026-08-29",
+        times: ["18:00~20:00"],
+        provider: "gangdong"
+      })
+    ]);
+
+    const watches = (await loadState()).watches;
+    expect(watches).toHaveLength(2);
+    expect(watches[0]).toMatchObject({ date: "2026-08-27", times: ["06:00~08:00"] });
+  });
+
   it("shares Telegram connection state across linked devices", async () => {
     const {
       addInviteCode,
