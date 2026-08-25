@@ -363,7 +363,8 @@ export function buildCycleSummary({ checked, activeVenueIds, vacancyCount, alert
     parts.push(providerSummary(providerId, activeProviders.get(providerId), checked, checkErrors));
   }
 
-  const tail = [`빈자리 ${vacancyCount}건`];
+  const vacancyLabel = checkErrors.length > 0 ? "확인된 빈자리" : "빈자리";
+  const tail = [`${vacancyLabel} ${vacancyCount}건`];
   if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
   parts.push(tail.join(" → "));
   return parts.join(" | ");

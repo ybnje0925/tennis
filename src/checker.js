@@ -33,19 +33,62 @@ export async function checkVenue(page, venueId, options = {}) {
   const results = [];
   for (const [targetMonth, dates] of datesByMonth) {
     await moveGangdongCalendarToMonth(page, targetMonth);
+    const calendar = await inspectGangdongCalendar(page);
+    const missingCells = dates.filter((date) => !calendar.dates.some((item) => item.date === date));
+    if (missingCells.length > 0) {
+      throw new Error(`CALENDAR_DATE_NOT_FOUND: ${venue.name} 날짜 cell을 찾지 못했습니다 (${missingCells.join(", ")})`);
+    }
+
     const reservations = await parseReservationDom(page, venueId);
+    const hasSlotData = dates.some((date) => {
+      const inspected = calendar.dates.find((item) => item.date === date);
+      return inspected?.slotElementCount > 0;
+    });
+    if (reservations.length === 0 && !hasSlotData) {
+      for (const date of dates) {
+        console.debug(`${venue.name} | ${date} | 날짜 확인 | 슬롯 미표시`);
+      }
+      continue;
+    }
     if (reservations.length === 0) {
       throw new Error(`${venue.name} ${targetMonth} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
     }
+
     const neededDates = new Set(dates);
-    const parsedDates = new Set(reservations.map((item) => item.date));
-    const missingDates = Array.from(neededDates).filter((date) => !parsedDates.has(date));
-    if (missingDates.length > 0) {
-      throw new Error(`TARGET_DATE_NOT_PARSED: ${venue.name} 대상날짜 파싱 실패 (${missingDates.join(", ")})`);
+    const matches = reservations.filter((item) => neededDates.has(item.date));
+    const missingReservationDates = dates.filter((date) => !matches.some((item) => item.date === date));
+    for (const date of missingReservationDates) {
+      console.debug(`${venue.name} | ${date} | 날짜 확인 | 예약 item 없음`);
     }
-    results.push(...reservations.filter((item) => neededDates.has(item.date)));
+    results.push(...matches);
   }
   return results;
+}
+
+export async function inspectGangdongCalendar(page) {
+  return page.evaluate(() => {
+    const normalizeSpaces = (value) => (value || "").replace(/\s+/g, " ").trim();
+    const headerText = normalizeSpaces(document.querySelector(".calendar1_yearmonth strong")?.textContent || "");
+    const header = headerText.match(/(20\d{2})\s*\.\s*([01]?\d)/);
+    if (!header) return { yearMonth: null, dates: [] };
+
+    const yearMonth = `${header[1]}-${header[2].padStart(2, "0")}`;
+    const dates = Array.from(document.querySelectorAll(".calendar1_table td")).flatMap((cell) => {
+      const dayText = normalizeSpaces(cell.querySelector("h6")?.textContent || "");
+      const day = dayText.match(/^([0-3]?\d)$/)?.[1];
+      if (!day) return [];
+
+      const slotElements = Array.from(cell.querySelectorAll("li"));
+      return [{
+        date: `${yearMonth}-${day.padStart(2, "0")}`,
+        present: true,
+        slotElementCount: slotElements.length,
+        reservationStatusCount: slotElements.filter((item) => /예약가능|예약완료/.test(item.textContent || "")).length
+      }];
+    });
+
+    return { yearMonth, dates };
+  });
 }
 
 export async function getGangdongCalendarMonth(page) {

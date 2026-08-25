@@ -696,7 +696,7 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 송파 3/4△ | 빈자리 0건");
+    })).toBe("조회완료 | 송파 3/4△ | 확인된 빈자리 0건");
   });
 
   it("formats Olympic failure with a short reason", () => {
@@ -711,6 +711,18 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["olympic"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 올림픽✕(날짜조회 실패) | 빈자리 0건");
+    })).toBe("조회완료 | 올림픽✕(날짜조회 실패) | 확인된 빈자리 0건");
+  });
+
+  it("keeps the normal vacancy label when every active provider succeeds with no slots", () => {
+    expect(buildCycleSummary({
+      checked: {
+        gangil: [],
+        myeongil: []
+      },
+      activeVenueIds: ["gangil", "myeongil"],
+      vacancyCount: 0,
+      alertCount: 0
+    })).toBe("조회완료 | 강동 2/2✓ | 빈자리 0건");
   });
 });
