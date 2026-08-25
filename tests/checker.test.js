@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const openGangdongSession = vi.fn();
 const parseReservationDom = vi.fn(async () => [
@@ -20,6 +20,38 @@ const parseReservationDom = vi.fn(async () => [
   }
 ]);
 
+function makeCalendarPage(initialMonth = "2026-08") {
+  const page = {
+    month: initialMonth,
+    goto: vi.fn(),
+    waitForLoadState: vi.fn(async () => {}),
+    waitForFunction: vi.fn(async (fn, targetMonth) => {
+      if (page.month !== targetMonth) throw new Error(`month did not change to ${targetMonth}`);
+    }),
+    locator: vi.fn((selector) => ({
+      first: () => ({
+        innerText: vi.fn(async () => page.month.replace("-", " . ")),
+        getAttribute: vi.fn(async () => {
+          if (selector.includes("다음달")) return `/page/rent/s01.od.list.php?sch_sym=${addMonths(page.month, 1)}`;
+          if (selector.includes("이전달")) return `/page/rent/s01.od.list.php?sch_sym=${addMonths(page.month, -1)}`;
+          return null;
+        }),
+        click: vi.fn(async () => {
+          if (selector.includes("다음달")) page.month = addMonths(page.month, 1);
+          if (selector.includes("이전달")) page.month = addMonths(page.month, -1);
+        })
+      })
+    }))
+  };
+  return page;
+}
+
+function addMonths(month, offset) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const index = year * 12 + monthNumber - 1 + offset;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
 vi.mock("../src/browserSession.js", () => ({
   openGangdongSession,
   ensureLoggedIn: vi.fn(async () => true),
@@ -30,7 +62,11 @@ vi.mock("../src/parser.js", () => ({
   parseReservationDom
 }));
 
-const { checkAllVenues, runProviderCheck } = await import("../src/checker.js");
+const { checkAllVenues, checkVenue, groupDatesByMonth, runProviderCheck } = await import("../src/checker.js");
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("checkAllVenues targeting", () => {
   it("does not launch Playwright when all providers are inactive", async () => {
@@ -55,10 +91,7 @@ describe("checkAllVenues targeting", () => {
 
   it("filters each active provider to the requested unique dates", async () => {
     const context = { close: vi.fn() };
-    const page = {
-      goto: vi.fn(),
-      waitForLoadState: vi.fn(async () => {})
-    };
+    const page = makeCalendarPage();
     openGangdongSession.mockResolvedValueOnce({ context, page });
 
     const result = await checkAllVenues({
@@ -72,10 +105,7 @@ describe("checkAllVenues targeting", () => {
 
   it("classifies a missing target date as a parser error instead of zero vacancies", async () => {
     const context = { close: vi.fn() };
-    const page = {
-      goto: vi.fn(),
-      waitForLoadState: vi.fn(async () => {})
-    };
+    const page = makeCalendarPage();
     openGangdongSession.mockResolvedValueOnce({ context, page });
     parseReservationDom.mockResolvedValueOnce([
       {
@@ -98,10 +128,7 @@ describe("checkAllVenues targeting", () => {
 
   it("deduplicates live venue checks across users", async () => {
     const context = { close: vi.fn() };
-    const page = {
-      goto: vi.fn(),
-      waitForLoadState: vi.fn(async () => {})
-    };
+    const page = makeCalendarPage();
     openGangdongSession.mockResolvedValueOnce({ context, page });
 
     await checkAllVenues({
@@ -127,5 +154,75 @@ describe("checkAllVenues targeting", () => {
     await expect(first).resolves.toEqual({ gangil: [] });
     expect(second).toEqual({});
     expect(running).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Gangdong calendar month navigation", () => {
+  it("checks the current month without moving", async () => {
+    const page = makeCalendarPage("2026-08");
+    parseReservationDom.mockImplementationOnce(async (currentPage) => [
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-29`, time: "18:00~20:00", available: true, availableCount: 1 }
+    ]);
+
+    const result = await checkVenue(page, "gangil", { dates: ["2026-08-29"] });
+
+    expect(result).toHaveLength(1);
+    expect(page.month).toBe("2026-08");
+  });
+
+  it("moves once for the next month", async () => {
+    const page = makeCalendarPage("2026-08");
+    parseReservationDom.mockImplementationOnce(async (currentPage) => [
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-12`, time: "06:00~08:00", available: true, availableCount: 1 }
+    ]);
+
+    const result = await checkVenue(page, "gangil", { dates: ["2026-09-12"] });
+
+    expect(result[0].date).toBe("2026-09-12");
+    expect(page.month).toBe("2026-09");
+  });
+
+  it("moves twice for a date two months ahead", async () => {
+    const page = makeCalendarPage("2026-08");
+    parseReservationDom.mockImplementationOnce(async (currentPage) => [
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-12`, time: "06:00~08:00", available: true, availableCount: 1 }
+    ]);
+
+    const result = await checkVenue(page, "gangil", { dates: ["2026-10-12"] });
+
+    expect(result[0].date).toBe("2026-10-12");
+    expect(page.month).toBe("2026-10");
+  });
+
+  it("moves from December to next January", async () => {
+    const page = makeCalendarPage("2026-12");
+    parseReservationDom.mockImplementationOnce(async (currentPage) => [
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-12`, time: "06:00~08:00", available: true, availableCount: 1 }
+    ]);
+
+    const result = await checkVenue(page, "gangil", { dates: ["2027-01-12"] });
+
+    expect(result[0].date).toBe("2027-01-12");
+    expect(page.month).toBe("2027-01");
+  });
+
+  it("groups multiple dates in the same month into one calendar parse", async () => {
+    const page = makeCalendarPage("2026-08");
+    parseReservationDom.mockImplementationOnce(async (currentPage) => [
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-12`, time: "06:00~08:00", available: true, availableCount: 1 },
+      { venue: "gangil", venueName: "강일테니스장", date: `${currentPage.month}-13`, time: "08:00~10:00", available: true, availableCount: 1 }
+    ]);
+
+    const result = await checkVenue(page, "gangil", { dates: ["2026-09-12", "2026-09-13"] });
+
+    expect(result).toHaveLength(2);
+    expect(parseReservationDom).toHaveBeenCalledTimes(1);
+  });
+
+  it("groups different watch months and visits each month once", () => {
+    expect(groupDatesByMonth(["2026-09-12", "2026-09-13", "2026-10-01"])).toEqual([
+      ["2026-09", ["2026-09-12", "2026-09-13"]],
+      ["2026-10", ["2026-10-01"]]
+    ]);
   });
 });

@@ -21,19 +21,113 @@ export async function checkVenue(page, venueId, options = {}) {
     throw new Error(`${venue.name} 예약현황이 실제 달력이 아니라 로그인/보호 페이지로 보입니다.`);
   }
 
-  const reservations = await parseReservationDom(page, venueId);
-  if (reservations.length === 0) {
-    throw new Error(`${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
+  if (!options.dates || options.dates.length === 0) {
+    const reservations = await parseReservationDom(page, venueId);
+    if (reservations.length === 0) {
+      throw new Error(`${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
+    }
+    return reservations;
   }
 
-  if (!options.dates || options.dates.length === 0) return reservations;
-  const neededDates = new Set(options.dates.map((date) => normalizeDate(date)).filter(Boolean));
-  const parsedDates = new Set(reservations.map((item) => item.date));
-  const missingDates = Array.from(neededDates).filter((date) => !parsedDates.has(date));
-  if (missingDates.length > 0) {
-    throw new Error(`TARGET_DATE_NOT_PARSED: ${venue.name} 대상날짜 파싱 실패 (${missingDates.join(", ")})`);
+  const datesByMonth = groupDatesByMonth(options.dates);
+  const results = [];
+  for (const [targetMonth, dates] of datesByMonth) {
+    await moveGangdongCalendarToMonth(page, targetMonth);
+    const reservations = await parseReservationDom(page, venueId);
+    if (reservations.length === 0) {
+      throw new Error(`${venue.name} ${targetMonth} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
+    }
+    const neededDates = new Set(dates);
+    const parsedDates = new Set(reservations.map((item) => item.date));
+    const missingDates = Array.from(neededDates).filter((date) => !parsedDates.has(date));
+    if (missingDates.length > 0) {
+      throw new Error(`TARGET_DATE_NOT_PARSED: ${venue.name} 대상날짜 파싱 실패 (${missingDates.join(", ")})`);
+    }
+    results.push(...reservations.filter((item) => neededDates.has(item.date)));
   }
-  return reservations.filter((item) => neededDates.has(item.date));
+  return results;
+}
+
+export async function getGangdongCalendarMonth(page) {
+  const text = await page.locator(".calendar1_yearmonth strong").first().innerText({ timeout: 5000 });
+  const match = text.replace(/\s+/g, " ").trim().match(/(20\d{2})\s*\.\s*([01]?\d)/);
+  if (!match) throw new Error(`강동 달력 연월을 읽지 못했습니다: ${text}`);
+  return `${match[1]}-${match[2].padStart(2, "0")}`;
+}
+
+export async function moveGangdongCalendarToMonth(page, targetMonth, options = {}) {
+  const maxMoves = options.maxMoves ?? 12;
+  let currentMonth = await getGangdongCalendarMonth(page);
+  let distance = monthDistance(currentMonth, targetMonth);
+  if (Math.abs(distance) > maxMoves) {
+    throw new Error(`강동 달력 이동 범위를 초과했습니다: ${currentMonth} → ${targetMonth}`);
+  }
+
+  let moves = 0;
+  while (distance !== 0) {
+    if (moves >= maxMoves) {
+      throw new Error(`강동 달력 이동 중단: ${currentMonth} → ${targetMonth}`);
+    }
+    const direction = distance > 0 ? "다음달" : "이전달";
+    const link = page.locator(`.calendar1_yearmonth a:has(img[alt="${direction}"])`).first();
+    const href = await link.getAttribute("href", { timeout: 5000 });
+    if (!href || href.startsWith("javascript:")) {
+      throw new Error(`강동 달력 ${direction} 이동 링크를 사용할 수 없습니다: ${currentMonth} → ${targetMonth}`);
+    }
+
+    const expectedMonth = addMonths(currentMonth, distance > 0 ? 1 : -1);
+    await Promise.all([
+      page.waitForLoadState("domcontentloaded").catch(() => {}),
+      link.click()
+    ]);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await waitForGangdongCalendarMonth(page, expectedMonth);
+    currentMonth = await getGangdongCalendarMonth(page);
+    distance = monthDistance(currentMonth, targetMonth);
+    moves += 1;
+  }
+
+  await waitForGangdongCalendarMonth(page, targetMonth);
+}
+
+async function waitForGangdongCalendarMonth(page, targetMonth) {
+  await page.waitForFunction((month) => {
+    const text = document.querySelector(".calendar1_yearmonth strong")?.textContent || "";
+    const match = text.replace(/\s+/g, " ").trim().match(/(20\d{2})\s*\.\s*([01]?\d)/);
+    if (!match) return false;
+    return `${match[1]}-${match[2].padStart(2, "0")}` === month;
+  }, targetMonth, { timeout: 10_000 });
+}
+
+export function groupDatesByMonth(dates) {
+  const groups = new Map();
+  for (const rawDate of dates || []) {
+    const date = normalizeDate(rawDate);
+    if (!date) continue;
+    const month = date.slice(0, 7);
+    if (!groups.has(month)) groups.set(month, new Set());
+    groups.get(month).add(date);
+  }
+  return Array.from(groups.entries())
+    .sort(([left], [right]) => monthIndex(left) - monthIndex(right))
+    .map(([month, values]) => [month, Array.from(values).sort()]);
+}
+
+function monthDistance(fromMonth, toMonth) {
+  return monthIndex(toMonth) - monthIndex(fromMonth);
+}
+
+function monthIndex(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return year * 12 + monthNumber;
+}
+
+function addMonths(month, offset) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const index = year * 12 + monthNumber - 1 + offset;
+  const nextYear = Math.floor(index / 12);
+  const nextMonth = (index % 12) + 1;
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
 }
 
 export async function checkGangdongVenues(venueIds, options = {}) {
