@@ -62,14 +62,15 @@ describe("provider polling minutes config", () => {
     expect(config.providerPollingMinutes.songpa).toBe(5);
   });
 
-  it("uses CHECK_INTERVAL_MINUTES only as a backward-compatible fallback", async () => {
+  it("keeps CHECK_INTERVAL_MINUTES from changing provider polling minutes", async () => {
     const { config } = await loadConfigWith({
       CHECK_INTERVAL_MINUTES: "8",
       OLYMPIC_POLLING_MINUTES: "10"
     });
 
-    expect(config.providerPollingMinutes.gangdong).toBe(8);
-    expect(config.providerPollingMinutes.songpa).toBe(8);
+    expect(config.checkIntervalMinutes).toBe(8);
+    expect(config.providerPollingMinutes.gangdong).toBe(5);
+    expect(config.providerPollingMinutes.songpa).toBe(5);
     expect(config.providerPollingMinutes.olympic).toBe(10);
   });
 

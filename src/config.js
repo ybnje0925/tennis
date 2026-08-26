@@ -16,7 +16,7 @@ export function parsePollingMinutes(value, fallback = 5) {
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
-const fallbackPollingMinutes = parsePollingMinutes(process.env.CHECK_INTERVAL_MINUTES, 5);
+const defaultPollingMinutes = 5;
 
 export const config = {
   gangdongUserId: process.env.GANGDONG_USER_ID || "",
@@ -36,11 +36,11 @@ export const config = {
   enableOlympicProvider: bool(process.env.ENABLE_OLYMPIC_PROVIDER, true),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),
-  checkIntervalMinutes: fallbackPollingMinutes,
+  checkIntervalMinutes: parsePollingMinutes(process.env.CHECK_INTERVAL_MINUTES, defaultPollingMinutes),
   providerPollingMinutes: {
-    gangdong: parsePollingMinutes(process.env.GANGDONG_POLLING_MINUTES, fallbackPollingMinutes),
-    songpa: parsePollingMinutes(process.env.SONGPA_POLLING_MINUTES, fallbackPollingMinutes),
-    olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, fallbackPollingMinutes)
+    gangdong: parsePollingMinutes(process.env.GANGDONG_POLLING_MINUTES, defaultPollingMinutes),
+    songpa: parsePollingMinutes(process.env.SONGPA_POLLING_MINUTES, defaultPollingMinutes),
+    olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, defaultPollingMinutes)
   }
 };
 

@@ -12,6 +12,9 @@ import {
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 
 const inFlightProviders = new Set();
+let schedulerTask = null;
+let schedulerCycleRunning = false;
+const SERVICE_TIME_ZONE = "Asia/Seoul";
 
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
@@ -105,7 +108,7 @@ export function addLog(state, message, date = new Date()) {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-    timeZone: "Asia/Seoul"
+    timeZone: SERVICE_TIME_ZONE
   }).format(date);
   state.system.logs.push(`[${time}] ${message}`);
   state.system.logs = state.system.logs.slice(-30);
@@ -123,9 +126,7 @@ export function activeProviderVenueIds(activeVenueIds) {
 }
 
 export function fixedSlotKey(date = new Date()) {
-  const slot = new Date(date);
-  slot.setUTCSeconds(0, 0);
-  return slot.toISOString();
+  return kstSlotKey(date);
 }
 
 export function providerPollingMinutes(providerId) {
@@ -134,16 +135,90 @@ export function providerPollingMinutes(providerId) {
 
 export function isProviderDue(providerState, now = new Date()) {
   const pollingMinutes = providerPollingMinutes(providerState.id);
-  return now.getUTCMinutes() % pollingMinutes === 0;
+  return kstParts(now).minute % pollingMinutes === 0;
 }
 
 export function nextFixedSlotAt(date = new Date(), pollingMinutes = 5) {
   const next = new Date(date);
-  const minutes = next.getUTCMinutes();
-  let addMinutes = (pollingMinutes - (minutes % pollingMinutes)) % pollingMinutes;
+  const { minute } = kstParts(next);
+  let addMinutes = (pollingMinutes - (minute % pollingMinutes)) % pollingMinutes;
   if (addMinutes === 0) addMinutes = pollingMinutes;
-  next.setUTCMinutes(minutes + addMinutes, 0, 0);
+  next.setUTCSeconds(0, 0);
+  next.setUTCMinutes(next.getUTCMinutes() + addMinutes);
   return next.toISOString();
+}
+
+export function isProviderWithinMonitoringHours(providerId, date = new Date()) {
+  const hours = PROVIDERS[providerId]?.monitoringHours;
+  if (!hours) return true;
+  const current = kstMinuteOfDay(date);
+  const start = clockToMinutes(hours.start);
+  const end = clockToMinutes(hours.end);
+  if (start === end) return true;
+  if (start < end) return current >= start && current < end;
+  return current >= start || current < end;
+}
+
+export function nextProviderMonitoringStartAt(providerId, date = new Date()) {
+  const hours = PROVIDERS[providerId]?.monitoringHours;
+  if (!hours || isProviderWithinMonitoringHours(providerId, date)) return null;
+  const start = clockToMinutes(hours.start);
+  return kstDateTimeToInstant({ ...kstParts(date), minuteOfDay: start }, date);
+}
+
+function clockToMinutes(value) {
+  const [hour, minute] = String(value).split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function kstMinuteOfDay(date) {
+  const parts = kstParts(date);
+  return parts.hour * 60 + parts.minute;
+}
+
+function kstParts(date) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: SERVICE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+  const values = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    second: Number(values.second)
+  };
+}
+
+function kstSlotKey(date) {
+  const parts = kstParts(date);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}T${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
+}
+
+function kstDateTimeToInstant({ year, month, day, minuteOfDay }, baseDate) {
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  let candidate = new Date(Date.UTC(year, month - 1, day, hour - 9, minute, 0, 0));
+  if (candidate <= baseDate) {
+    candidate = new Date(candidate.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return candidate.toISOString();
+}
+
+function outsideMonitoringHoursLabel(providerId) {
+  const hours = PROVIDERS[providerId]?.monitoringHours;
+  if (!hours) return "";
+  const start = hours.start === "24:00" ? "00:00" : hours.start;
+  const end = hours.end === "24:00" ? "00:00" : hours.end;
+  return `${end}~${start}`;
 }
 
 export function filterWatchesToVenueIds(watches, venueIds) {
@@ -164,18 +239,27 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
     const previous = state.system.providers[providerId] || {};
     const pollingMinutes = providerPollingMinutes(providerId);
     const lastCheckedAt = previous.lastCheckedAt || null;
+    const withinMonitoringHours = isProviderWithinMonitoringHours(providerId, now);
     state.system.providers[providerId] = {
       id: providerId,
       pollingMinutes,
       active: active.has(providerId),
       lastCheckedAt,
       lastProcessedSlotAt: previous.lastProcessedSlotAt || null,
-      nextCheckAt: active.has(providerId) ? nextFixedSlotAt(now, pollingMinutes) : null
+      monitoringHours: PROVIDERS[providerId]?.monitoringHours || null,
+      monitoringStatus: withinMonitoringHours ? "active" : "outside-hours",
+      nextCheckAt: active.has(providerId)
+        ? (withinMonitoringHours ? nextFixedSlotAt(now, pollingMinutes) : nextProviderMonitoringStartAt(providerId, now))
+        : null
     };
   }
 
-  state.system.lastCheckedAt = commonActiveProviderTime(state.system.providers, "lastCheckedAt");
-  state.system.nextCheckAt = commonActiveProviderTime(state.system.providers, "nextCheckAt");
+  const commonLast = commonActiveProviderTime(state.system.providers, "lastCheckedAt");
+  const commonNext = commonActiveProviderTime(state.system.providers, "nextCheckAt");
+  state.system.lastCheckedAt = commonLast;
+  state.system.nextCheckAt = commonNext;
+  state.system.lastRunAt ||= commonLast;
+  state.system.nextRunAt = nextFixedSlotAt(now, schedulerIntervalMinutes(activeProviderIds));
 }
 
 function commonActiveProviderTime(providers, key) {
@@ -191,6 +275,12 @@ export function nextRunAt(date = new Date(), minuteStep = 5) {
   return nextFixedSlotAt(date, minuteStep);
 }
 
+function schedulerIntervalMinutes(providerIds = Object.keys(PROVIDERS)) {
+  const values = Array.from(providerIds).map(providerPollingMinutes).filter(Number.isFinite);
+  if (values.length === 0) return 5;
+  return Math.min(...values);
+}
+
 export async function runCheckCycle({
   checker = checkAllVenues,
   notifier = sendTelegram,
@@ -200,6 +290,7 @@ export async function runCheckCycle({
   now = new Date()
 } = {}) {
   const state = await stateLoader();
+  const runStartedAt = now.toISOString();
   state.system.providers ||= {};
   const usersById = new Map((state.users || []).map((user) => [user.id, user]));
   const activeWatches = getActiveWatches(state);
@@ -209,6 +300,15 @@ export async function runCheckCycle({
     VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
   ));
   const activeProviders = activeProviderVenueIds(activeVenueIds);
+  const runIntervalMinutes = schedulerIntervalMinutes(activeProviders.keys());
+  state.system.lastRun = {
+    runStartedAt,
+    runFinishedAt: null,
+    nextRunAt: nextFixedSlotAt(now, runIntervalMinutes),
+    facilities: {}
+  };
+  state.system.nextRunAt = state.system.lastRun.nextRunAt;
+  state.system.nextCheckAt = state.system.nextRunAt;
   syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
 
   if (activeWatches.length === 0 || activeVenueIds.length === 0) {
@@ -224,6 +324,10 @@ export async function runCheckCycle({
   let targetVenueIds = activeVenueIds;
   let targetWatches = activeWatches;
   let targetProviderIds = Array.from(activeProviders.keys());
+  const skippedProviders = targetProviderIds
+    .filter((providerId) => !isProviderWithinMonitoringHours(providerId, now))
+    .map((provider) => ({ provider, reason: "운영시간 외" }));
+  const skippedProviderIds = new Set(skippedProviders.map((item) => item.provider));
   const slotKey = fixedSlotKey(now);
   if (source === "scheduler") {
     const dueProviderIds = new Set(targetProviderIds.filter((providerId) => {
@@ -231,6 +335,7 @@ export async function runCheckCycle({
       if (!isProviderDue(providerState, now)) return false;
       if (providerState.lastProcessedSlotAt === slotKey) return false;
       if (inFlightProviders.has(providerId)) return false;
+      if (skippedProviderIds.has(providerId)) return false;
       return true;
     }));
     targetVenueIds = activeVenueIds.filter((venueId) => {
@@ -241,6 +346,17 @@ export async function runCheckCycle({
     targetProviderIds = Array.from(dueProviderIds);
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
       syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
+      if (skippedProviders.length > 0) {
+        addSkipLogs(state, skippedProviders, now);
+        addLog(state, buildCycleSummary({
+          checked: {},
+          activeVenueIds,
+          skippedProviders,
+          vacancyCount: 0,
+          alertCount: 0
+        }), now);
+        finishRunState(state, now, activeVenueIds, {}, skippedProviders);
+      }
       await stateSaver(state);
       return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
     }
@@ -251,6 +367,23 @@ export async function runCheckCycle({
         ...(state.system.providers[providerId] || {}),
         lastProcessedSlotAt: slotKey
       };
+    }
+  } else if (skippedProviderIds.size > 0) {
+    targetVenueIds = activeVenueIds.filter((venueId) => !skippedProviderIds.has(VENUES[venueId]?.provider));
+    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
+    targetProviderIds = targetProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
+    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
+      addSkipLogs(state, skippedProviders, now);
+      addLog(state, buildCycleSummary({
+        checked: {},
+        activeVenueIds,
+        skippedProviders,
+        vacancyCount: 0,
+        alertCount: 0
+      }), now);
+      finishRunState(state, now, activeVenueIds, {}, skippedProviders);
+      await stateSaver(state);
+      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true };
     }
   }
 
@@ -271,7 +404,8 @@ export async function runCheckCycle({
     });
     updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
     syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
-    addLog(state, buildCycleSummary({ checked, activeVenueIds: targetVenueIds, vacancyCount: 0, alertCount: 0 }));
+    addLog(state, buildCycleSummary({ checked, activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders), skippedProviders, vacancyCount: 0, alertCount: 0 }), now);
+    finishRunState(state, now, targetVenueIds, checked, skippedProviders);
     await stateSaver(state);
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
@@ -304,7 +438,7 @@ export async function runCheckCycle({
       console.error(`Telegram 알림 발송 실패: ${error.message}`);
     }
   }
-  addLog(state, buildCycleSummary({ checked, activeVenueIds: targetVenueIds, vacancyCount, alertCount }));
+  addLog(state, buildCycleSummary({ checked, activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders), skippedProviders, vacancyCount, alertCount }), now);
 
   for (const item of reservations) {
     state.lastAvailability[keyFor(item)] = {
@@ -337,8 +471,50 @@ export async function runCheckCycle({
   }
   updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
   syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
+  finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
   await stateSaver(state);
   return { checkedAt, reservations, notifications, errors };
+}
+
+function summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders) {
+  const skippedProviderIds = new Set(skippedProviders.map((item) => item.provider));
+  return Array.from(new Set([
+    ...targetVenueIds,
+    ...activeVenueIds.filter((venueId) => skippedProviderIds.has(VENUES[venueId]?.provider))
+  ]));
+}
+
+function addSkipLogs(state, skippedProviders, now) {
+  for (const { provider, reason } of skippedProviders) {
+    if (provider !== "olympic" || reason !== "운영시간 외") continue;
+    addLog(state, `[올림픽공원] 조회 SKIP | 운영시간 외 (${outsideMonitoringHoursLabel(provider)})`, now);
+  }
+}
+
+function finishRunState(state, now, activeVenueIds, checked = {}, skippedProviders = [], checkedAt = new Date().toISOString()) {
+  const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
+  const facilities = {};
+  for (const venueId of activeVenueIds) {
+    const providerId = VENUES[venueId]?.provider;
+    const skippedReason = skipped.get(providerId);
+    facilities[venueId] = skippedReason
+      ? { provider: providerId, status: "skipped", reason: skippedReason }
+      : {
+          provider: providerId,
+          status: Object.prototype.hasOwnProperty.call(checked, venueId) || Object.prototype.hasOwnProperty.call(checked, providerId) ? "checked" : "not-due",
+          count: checked[venueId]?.length ?? checked[providerId]?.length ?? 0
+        };
+  }
+  state.system.lastRun = {
+    ...(state.system.lastRun || {}),
+    runFinishedAt: checkedAt,
+    nextRunAt: state.system.lastRun?.nextRunAt || nextFixedSlotAt(now, 5),
+    facilities
+  };
+  state.system.lastRunAt = checkedAt;
+  state.system.nextRunAt = state.system.lastRun.nextRunAt;
+  state.system.lastCheckedAt = checkedAt;
+  state.system.nextCheckAt = state.system.nextRunAt;
 }
 
 function updateCheckedProviderSchedule(state, venueIds, checkedAt) {
@@ -353,13 +529,18 @@ function updateCheckedProviderSchedule(state, venueIds, checkedAt) {
   }
 }
 
-export function buildCycleSummary({ checked, activeVenueIds, vacancyCount, alertCount }) {
+export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount }) {
   const parts = ["조회완료"];
   const activeProviders = providerTargets(activeVenueIds);
   const checkErrors = checked?.[CHECK_META]?.errors || [];
+  const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
 
   for (const providerId of ["gangdong", "songpa", "olympic"]) {
     if (!activeProviders.has(providerId)) continue;
+    if (skipped.has(providerId)) {
+      parts.push(`${providerLabel(providerId)} SKIP(${skipped.get(providerId)})`);
+      continue;
+    }
     parts.push(providerSummary(providerId, activeProviders.get(providerId), checked, checkErrors));
   }
 
@@ -368,6 +549,13 @@ export function buildCycleSummary({ checked, activeVenueIds, vacancyCount, alert
   if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
   parts.push(tail.join(" → "));
   return parts.join(" | ");
+}
+
+function providerLabel(providerId) {
+  if (providerId === "gangdong") return "강동";
+  if (providerId === "songpa") return "송파";
+  if (providerId === "olympic") return "올림픽";
+  return providerId;
 }
 
 function providerTargets(activeVenueIds) {
@@ -443,6 +631,7 @@ function normalizeOlympicWatch(watch) {
 }
 
 export function startScheduler() {
+  if (schedulerTask) return schedulerTask;
   const expression = "* * * * *";
   loadState()
     .then((state) => {
@@ -456,10 +645,23 @@ export function startScheduler() {
     })
     .catch((error) => console.error(`Scheduler state update failed: ${error.message}`));
   const task = cron.schedule(expression, () => {
+    if (schedulerCycleRunning) {
+      loadState()
+        .then((state) => {
+          addLog(state, "조회 SKIP - 이전 조회 진행 중");
+          return saveState(state);
+        })
+        .catch((error) => console.error(`Scheduler overlap log failed: ${error.message}`));
+      return;
+    }
+    schedulerCycleRunning = true;
     runCheckCycle().catch((error) => {
       console.error(`Check cycle failed: ${error.message}`);
+    }).finally(() => {
+      schedulerCycleRunning = false;
     });
-  });
+  }, { timezone: SERVICE_TIME_ZONE });
+  schedulerTask = task;
   console.log(`Scheduler started: provider polling due check every 1 minute.`);
   console.log(`Polling | 강동 ${PROVIDERS.gangdong.pollingMinutes}분 | 송파 ${PROVIDERS.songpa.pollingMinutes}분 | 올림픽 ${PROVIDERS.olympic.pollingMinutes}분`);
   return task;

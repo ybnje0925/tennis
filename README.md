@@ -31,7 +31,7 @@ ADMIN_API_TOKEN=
 LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
-CHECK_INTERVAL_MINUTES=10
+CHECK_INTERVAL_MINUTES=5
 GANGDONG_POLLING_MINUTES=5
 SONGPA_POLLING_MINUTES=5
 OLYMPIC_POLLING_MINUTES=5
@@ -55,7 +55,7 @@ npm run diagnose:songpa
 
 Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬 `diagnose:olympic`을 동시에 실행하지 마십시오. 올림픽공원 자동 감시가 필요 없는 로컬 개발환경에서는 `ENABLE_OLYMPIC_PROVIDER=false`로 두면 scheduler/manual 자동 조회에서 Olympic provider를 호출하지 않습니다. 단, `npm run diagnose:olympic`은 명시적인 진단 명령이므로 이 값과 별도로 실행할 수 있습니다.
 
-서버 실행 중에는 등록된 활성 알림 조건을 기준으로 provider별 조회주기에 맞춰 자동 조회합니다. 기본값은 강동, 송파, 올림픽 모두 5분입니다.
+서버 실행 중에는 등록된 활성 알림 조건을 기준으로 provider별 조회주기에 맞춰 자동 조회합니다. 기본값은 강동, 송파, 올림픽 모두 5분입니다. 올림픽공원은 KST 09:00~24:00에만 조회하며, 00:00~09:00에는 브라우저 접속과 로그인을 시도하지 않고 정상 SKIP으로 기록합니다.
 
 ## 동작 방식
 
@@ -202,7 +202,7 @@ LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
 ENABLE_OLYMPIC_PROVIDER=true
-CHECK_INTERVAL_MINUTES=10
+CHECK_INTERVAL_MINUTES=5
 GANGDONG_POLLING_MINUTES=5
 SONGPA_POLLING_MINUTES=5
 OLYMPIC_POLLING_MINUTES=5
@@ -217,7 +217,7 @@ SONGPA_POLLING_MINUTES=5
 OLYMPIC_POLLING_MINUTES=5
 ```
 
-이후 조회주기를 변경하려면 코드를 수정하지 말고 Railway Variables에서 숫자만 변경합니다. 예: `OLYMPIC_POLLING_MINUTES=10`. 환경변수 수정 후 Railway 서비스가 재시작되면 새 값이 적용됩니다. provider 전용 변수가 없으면 기존 `CHECK_INTERVAL_MINUTES`를 fallback으로 사용하고, 둘 다 없거나 잘못된 값이면 기본 5분을 사용합니다.
+이후 조회주기를 변경하려면 코드를 수정하지 말고 Railway Variables에서 provider별 숫자만 변경합니다. 예: `OLYMPIC_POLLING_MINUTES=10`. 환경변수 수정 후 Railway 서비스가 재시작되면 새 값이 적용됩니다. provider 전용 변수가 없거나 잘못된 값이면 기본 5분을 사용합니다. `CHECK_INTERVAL_MINUTES`는 legacy 표시용 값으로 남아 있지만 provider별 실제 조회주기의 fallback으로 쓰지 않습니다.
 
 송파구시설관리공단 연동을 사용하려면 Railway Variables에 다음 값을 추가하세요.
 

@@ -80,6 +80,10 @@ export const PROVIDERS = {
     name: "올림픽공원 테니스장",
     slotMinutes: 60,
     pollingMinutes: config.providerPollingMinutes.olympic,
+    monitoringHours: {
+      start: "09:00",
+      end: "24:00"
+    },
     publicUrl: "https://www.ksponco.or.kr/online/tennis/index.do",
     supportsCourtNumber: true,
     supportsContinuousSlots: false,

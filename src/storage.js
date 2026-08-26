@@ -20,6 +20,9 @@ const initialState = {
   lastAvailability: {},
   sentNotifications: {},
   system: {
+    lastRunAt: null,
+    nextRunAt: null,
+    lastRun: null,
     lastCheckedAt: null,
     nextCheckAt: null,
     lastManualCheckAt: null,
@@ -351,6 +354,9 @@ function normalizeState(raw) {
   state.sentNotifications = state.sentNotifications || {};
   state.system.venues = state.system.venues || {};
   state.system.providers = state.system.providers || {};
+  state.system.lastRunAt ||= state.system.lastCheckedAt || null;
+  state.system.nextRunAt ||= state.system.nextCheckAt || null;
+  state.system.lastRun ||= null;
   state.system.logs = Array.isArray(state.system.logs) ? state.system.logs.slice(-30) : [];
   return state;
 }

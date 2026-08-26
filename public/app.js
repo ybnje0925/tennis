@@ -71,20 +71,18 @@ function formatDateTime(value) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    hour12: false
+    hour12: false,
+    timeZone: "Asia/Seoul"
   }).format(new Date(value));
 }
 
 function formatProviderStatus(status, providerId, active) {
   if (!active) return "미사용";
   const provider = status.providers?.[providerId] || {};
-  return `감시 중 · ${formatDateTime(provider.lastCheckedAt)} → ${formatDateTime(provider.nextCheckAt)}`;
-}
-
-function formatAggregateCheckTime(status, key) {
-  if (status[key]) return formatDateTime(status[key]);
-  const activeProviders = Object.values(status.providers || {}).filter((provider) => provider.active);
-  return activeProviders.length > 1 ? "provider별 확인" : "-";
+  if (provider.monitoringStatus === "outside-hours") {
+    return `운영시간 외 · ${formatDateTime(provider.nextCheckAt)}부터 조회`;
+  }
+  return `감시 중 · ${formatDateTime(status.lastRunAt)} → ${formatDateTime(status.nextRunAt)}`;
 }
 
 function formatDate(value) {
@@ -152,8 +150,8 @@ function isPublicHttpUrl(value) {
 
 async function loadStatus() {
   const status = await request("/api/status");
-  lastCheckedEl.textContent = formatAggregateCheckTime(status, "lastCheckedAt");
-  nextCheckEl.textContent = formatAggregateCheckTime(status, "nextCheckAt");
+  lastCheckedEl.textContent = formatDateTime(status.lastRunAt);
+  nextCheckEl.textContent = formatDateTime(status.nextRunAt);
   const gangdongActive = Boolean(status.activeVenues?.gangil || status.activeVenues?.myeongil);
   const songpaActive = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id]);
   gangilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);

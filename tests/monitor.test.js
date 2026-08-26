@@ -5,8 +5,10 @@ import {
   findNotifications,
   groupActiveWatchesByVenue,
   isProviderDue,
+  isProviderWithinMonitoringHours,
   keyFor,
   nextFixedSlotAt,
+  nextProviderMonitoringStartAt,
   runCheckCycle,
   syncProviderSchedule
 } from "../src/monitor.js";
@@ -539,6 +541,69 @@ describe("runCheckCycle active watch targeting", () => {
       expect(current.system.logs[0]).not.toContain("올림픽✓");
     });
   });
+
+  it("skips Olympic outside monitoring hours without sending it to the checker", async () => {
+    const current = state({
+      watches: [
+        { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+        { id: "o", userId: "u1", provider: "olympic", venues: ["olympic"], date: "2026-08-29", times: ["18:00~19:00"], enabled: true }
+      ]
+    });
+    const checker = vi.fn(async ({ watches }) => {
+      expect(watches.map((watch) => watch.id).sort()).toEqual(["g", "s"]);
+      return {
+        gangil: [slot({ available: false, availableCount: 0 })],
+        "songpa-oryun": [slot({ venue: "songpa-oryun", venueName: "오륜테니스장", available: false, availableCount: 0 })]
+      };
+    });
+
+    await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-25T23:30:00.000Z") });
+
+    expect(checker).toHaveBeenCalledTimes(1);
+    expect(current.system.logs[0]).toContain("강동 1/1✓");
+    expect(current.system.logs[0]).toContain("송파 1/1✓");
+    expect(current.system.logs[0]).toContain("올림픽 SKIP(운영시간 외)");
+  });
+
+  it("checks Olympic during monitoring hours", async () => {
+    const current = olympicState();
+    const checker = vi.fn(async ({ watches }) => {
+      expect(watches.map((watch) => watch.id)).toEqual(["w1"]);
+      return { olympic: [] };
+    });
+
+    await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:00:00.000Z") });
+
+    expect(checker).toHaveBeenCalledTimes(1);
+    expect(current.system.logs[0]).toContain("올림픽✓");
+  });
+
+  it("stores scheduler run times from the same cycle clock used by logs", async () => {
+    const current = state();
+    const checker = vi.fn(async () => ({
+      gangil: [slot({ available: false, availableCount: 0 })]
+    }));
+
+    await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:50:00.000Z") });
+
+    expect(current.system.logs[0]).toContain("[09:50] 조회완료");
+    expect(current.system.lastRunAt).toBe(current.system.lastRun.runFinishedAt);
+    expect(current.system.nextRunAt).toBe("2026-08-26T00:55:00.000Z");
+    expect(current.system.nextCheckAt).toBe(current.system.nextRunAt);
+  });
+});
+
+describe("provider monitoring hours", () => {
+  it("treats Olympic as outside hours before 09:00 KST", () => {
+    expect(isProviderWithinMonitoringHours("olympic", new Date("2026-08-25T23:30:00.000Z"))).toBe(false);
+    expect(nextProviderMonitoringStartAt("olympic", new Date("2026-08-25T23:30:00.000Z"))).toBe("2026-08-26T00:00:00.000Z");
+  });
+
+  it("treats Olympic as open from 09:00 KST", () => {
+    expect(isProviderWithinMonitoringHours("olympic", new Date("2026-08-26T00:00:00.000Z"))).toBe(true);
+    expect(isProviderWithinMonitoringHours("olympic", new Date("2026-08-26T14:59:00.000Z"))).toBe(true);
+  });
 });
 
 describe("isProviderDue", () => {
@@ -624,26 +689,26 @@ describe("syncProviderSchedule", () => {
     const current = state();
 
     withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, () => {
-      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T17:45:00.000Z"));
+      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T00:45:00.000Z"));
 
       expect(current.system.providers.gangdong).toMatchObject({
         pollingMinutes: 5,
-        nextCheckAt: "2026-08-24T17:50:00.000Z"
+        nextCheckAt: "2026-08-24T00:50:00.000Z"
       });
       expect(current.system.providers.songpa).toMatchObject({
         pollingMinutes: 5,
-        nextCheckAt: "2026-08-24T17:50:00.000Z"
+        nextCheckAt: "2026-08-24T00:50:00.000Z"
       });
       expect(current.system.providers.olympic).toMatchObject({
         pollingMinutes: 10,
-        nextCheckAt: "2026-08-24T17:50:00.000Z"
+        nextCheckAt: "2026-08-24T00:50:00.000Z"
       });
-      expect(current.system.nextCheckAt).toBe("2026-08-24T17:50:00.000Z");
+      expect(current.system.nextCheckAt).toBe("2026-08-24T00:50:00.000Z");
 
-      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T17:50:00.000Z"));
-      expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
-      expect(current.system.providers.songpa.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
-      expect(current.system.providers.olympic.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
+      syncProviderSchedule(current, ["gangdong", "songpa", "olympic"], new Date("2026-08-24T00:50:00.000Z"));
+      expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T00:55:00.000Z");
+      expect(current.system.providers.songpa.nextCheckAt).toBe("2026-08-24T00:55:00.000Z");
+      expect(current.system.providers.olympic.nextCheckAt).toBe("2026-08-24T01:00:00.000Z");
       expect(current.system.nextCheckAt).toBeNull();
     });
   });
