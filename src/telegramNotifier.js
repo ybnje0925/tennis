@@ -1,5 +1,6 @@
 import { config } from "./config.js";
 import { VENUES } from "./constants.js";
+import { formatKoreanDateWithWeekday } from "../public/dateFormat.js";
 
 export class TelegramConfigurationError extends Error {
   constructor(message) {
@@ -98,8 +99,6 @@ export function buildAvailabilityMessage(item) {
   if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);
 
   const venue = VENUES[item.venue];
-  const month = Number(item.date.slice(5, 7));
-  const day = Number(item.date.slice(8, 10));
   const countLine = Number.isFinite(item.availableCount)
     ? `${item.provider === "songpa" ? "예약 가능 코트" : "현재 예약 가능 코트"}: ${item.availableCount}개`
     : null;
@@ -109,7 +108,7 @@ export function buildAvailabilityMessage(item) {
     "",
     `${item.venueName} 빈자리 발견!`,
     "",
-    `${month}월 ${day}일`,
+    formatKoreanDateWithWeekday(item.date),
     item.time,
     "",
     countLine,
@@ -121,15 +120,13 @@ export function buildAvailabilityMessage(item) {
 
 export function buildOlympicAvailabilityMessage(item) {
   const venue = VENUES.olympic;
-  const month = Number(item.date.slice(5, 7));
-  const day = Number(item.date.slice(8, 10));
   return [
     "🎾 테니스 잡아줘",
     "",
     "올림픽공원 테니스장 빈자리!",
     "",
     `${item.courtNo}번 코트`,
-    `${month}월 ${day}일`,
+    formatKoreanDateWithWeekday(item.date),
     `${item.startTime}~${item.endTime}`,
     "",
     "예약 가능합니다.",

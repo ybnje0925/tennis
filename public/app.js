@@ -1,3 +1,6 @@
+import { formatKoreanDateWithWeekday } from "./dateFormat.js";
+import { sortWatchesByReservationTime } from "./watchSorting.js";
+
 const form = document.querySelector("#watchForm");
 const inviteForm = document.querySelector("#inviteForm");
 const invitePanel = document.querySelector("#invitePanel");
@@ -86,9 +89,7 @@ function formatProviderStatus(status, providerId, active) {
 }
 
 function formatDate(value) {
-  if (!value) return "";
-  const date = new Date(`${value}T00:00:00`);
-  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+  return formatKoreanDateWithWeekday(value);
 }
 
 async function loadOptions() {
@@ -169,7 +170,7 @@ async function loadWatches() {
     watchesEl.innerHTML = `<p class="empty">아직 등록된 알림 조건이 없습니다.</p>`;
     return;
   }
-  watchesEl.innerHTML = watches
+  watchesEl.innerHTML = sortWatchesByReservationTime(watches)
     .map((watch) => {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const olympicDetail = watch.provider === "olympic"
