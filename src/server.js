@@ -202,9 +202,13 @@ app.get("/api/watches", requireUser, async (req, res, next) => {
 app.get("/api/status", requireUser, async (req, res, next) => {
   try {
     const state = await loadState();
-    const activeByVenue = groupActiveWatchesByVenue(getActiveWatches(state));
+    const userWatches = state.watches.filter((watch) => watch.userId === req.user.id);
+    const activeUserWatches = getActiveWatches({ ...state, watches: userWatches });
+    const activeByVenue = groupActiveWatchesByVenue(activeUserWatches);
     res.json({
       ...state.system,
+      currentUserWatchCount: userWatches.length,
+      currentUserActiveWatchCount: activeUserWatches.length,
       activeVenues: Object.fromEntries(
         Object.keys(VENUES).map((venueId) => [
           venueId,

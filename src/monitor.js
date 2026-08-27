@@ -12,8 +12,8 @@ import {
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 
 const inFlightProviders = new Set();
+const providerRuntimeState = new Map();
 let schedulerTask = null;
-let schedulerCycleRunning = false;
 const SERVICE_TIME_ZONE = "Asia/Seoul";
 
 export function keyFor(item) {
@@ -237,15 +237,34 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
 
   for (const providerId of Object.keys(PROVIDERS)) {
     const previous = state.system.providers[providerId] || {};
+    const runtime = providerRuntime(providerId);
     const pollingMinutes = providerPollingMinutes(providerId);
     const lastCheckedAt = previous.lastCheckedAt || null;
     const withinMonitoringHours = isProviderWithinMonitoringHours(providerId, now);
+    const pending = Boolean(runtime.pending || previous.pending);
+    const status = !active.has(providerId)
+      ? "idle"
+      : !withinMonitoringHours
+        ? "outside-hours"
+        : runtime.inFlight
+          ? "running"
+          : pending
+            ? "pending"
+            : previous.status === "error"
+              ? "error"
+              : "idle";
     state.system.providers[providerId] = {
       id: providerId,
       pollingMinutes,
       active: active.has(providerId),
+      status,
       lastCheckedAt,
+      lastStartedAt: previous.lastStartedAt || null,
+      lastFinishedAt: previous.lastFinishedAt || null,
+      lastDurationMs: previous.lastDurationMs || null,
       lastProcessedSlotAt: previous.lastProcessedSlotAt || null,
+      pending,
+      lastError: previous.lastError || null,
       monitoringHours: PROVIDERS[providerId]?.monitoringHours || null,
       monitoringStatus: withinMonitoringHours ? "active" : "outside-hours",
       nextCheckAt: active.has(providerId)
@@ -287,7 +306,9 @@ export async function runCheckCycle({
   stateLoader = loadState,
   stateSaver = saveState,
   source = "scheduler",
-  now = new Date()
+  now = new Date(),
+  targetProviderIds = null,
+  forceDue = false
 } = {}) {
   const state = await stateLoader();
   const runStartedAt = now.toISOString();
@@ -321,21 +342,29 @@ export async function runCheckCycle({
     return { checkedAt, reservations: [], notifications: [], errors: [], skipped: true };
   }
 
-  let targetVenueIds = activeVenueIds;
+  const requestedProviderIds = targetProviderIds
+    ? new Set(targetProviderIds.filter((providerId) => activeProviders.has(providerId)))
+    : null;
+  let targetVenueIds = requestedProviderIds
+    ? activeVenueIds.filter((venueId) => requestedProviderIds.has(VENUES[venueId]?.provider))
+    : activeVenueIds;
   let targetWatches = activeWatches;
-  let targetProviderIds = Array.from(activeProviders.keys());
-  const skippedProviders = targetProviderIds
+  let selectedProviderIds = requestedProviderIds ? Array.from(requestedProviderIds) : Array.from(activeProviders.keys());
+  const skippedProviders = selectedProviderIds
     .filter((providerId) => !isProviderWithinMonitoringHours(providerId, now))
     .map((provider) => ({ provider, reason: "운영시간 외" }));
   const skippedProviderIds = new Set(skippedProviders.map((item) => item.provider));
   const slotKey = fixedSlotKey(now);
-  if (source === "scheduler") {
-    const dueProviderIds = new Set(targetProviderIds.filter((providerId) => {
+  if (source === "scheduler" || source === "scheduler-pending") {
+    const dueProviderIds = new Set(selectedProviderIds.filter((providerId) => {
       const providerState = state.system.providers[providerId];
-      if (!isProviderDue(providerState, now)) return false;
-      if (providerState.lastProcessedSlotAt === slotKey) return false;
-      if (inFlightProviders.has(providerId)) return false;
+      if (!forceDue && !isProviderDue(providerState, now)) return false;
+      if (!forceDue && providerState.lastProcessedSlotAt === slotKey) return false;
       if (skippedProviderIds.has(providerId)) return false;
+      if (inFlightProviders.has(providerId)) {
+        markProviderPending(state, providerId, slotKey, now);
+        return false;
+      }
       return true;
     }));
     targetVenueIds = activeVenueIds.filter((venueId) => {
@@ -343,7 +372,7 @@ export async function runCheckCycle({
       return dueProviderIds.has(providerId);
     });
     targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
-    targetProviderIds = Array.from(dueProviderIds);
+    selectedProviderIds = Array.from(dueProviderIds);
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
       syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
       if (skippedProviders.length > 0) {
@@ -361,17 +390,25 @@ export async function runCheckCycle({
       return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
     }
 
-    for (const providerId of targetProviderIds) {
+    for (const providerId of selectedProviderIds) {
       inFlightProviders.add(providerId);
+      const runtime = providerRuntime(providerId);
+      runtime.inFlight = true;
+      runtime.startedAt = new Date();
       state.system.providers[providerId] = {
         ...(state.system.providers[providerId] || {}),
+        status: "running",
+        pending: false,
+        lastStartedAt: runtime.startedAt.toISOString(),
+        lastError: null,
         lastProcessedSlotAt: slotKey
       };
+      addLog(state, `${providerLabel(providerId)} ${source === "scheduler-pending" ? "지연" : "정규"} 조회 START`, now);
     }
   } else if (skippedProviderIds.size > 0) {
     targetVenueIds = activeVenueIds.filter((venueId) => !skippedProviderIds.has(VENUES[venueId]?.provider));
     targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
-    targetProviderIds = targetProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
+    selectedProviderIds = selectedProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
       addSkipLogs(state, skippedProviders, now);
       addLog(state, buildCycleSummary({
@@ -395,7 +432,11 @@ export async function runCheckCycle({
     checked = await checker({ watches: targetWatches, source });
   } catch (error) {
     const checkedAt = new Date().toISOString();
-    for (const providerId of targetProviderIds) inFlightProviders.delete(providerId);
+    const pendingProviderIds = [];
+    for (const providerId of selectedProviderIds) {
+      finishProviderRuntime(state, providerId, checkedAt, error);
+      if (providerRuntime(providerId).pending) pendingProviderIds.push(providerId);
+    }
     checked = {};
     Object.defineProperty(checked, CHECK_META, {
       value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
@@ -407,11 +448,17 @@ export async function runCheckCycle({
     addLog(state, buildCycleSummary({ checked, activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders), skippedProviders, vacancyCount: 0, alertCount: 0 }), now);
     finishRunState(state, now, targetVenueIds, checked, skippedProviders);
     await stateSaver(state);
+    runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
     return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
   }
-  for (const providerId of targetProviderIds) inFlightProviders.delete(providerId);
 
   const reservations = Object.values(checked).flat();
+  const pendingProviderIds = [];
+  for (const providerId of selectedProviderIds) {
+    finishProviderRuntime(state, providerId, new Date().toISOString());
+    if (providerRuntime(providerId).pending) pendingProviderIds.push(providerId);
+  }
+
   const notifications = findNotifications(state, reservations);
   const vacancyCount = countMatchingAvailableItems(state, reservations);
 
@@ -473,7 +520,72 @@ export async function runCheckCycle({
   syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
   await stateSaver(state);
+  runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
   return { checkedAt, reservations, notifications, errors };
+}
+
+function providerRuntime(providerId) {
+  if (!providerRuntimeState.has(providerId)) {
+    providerRuntimeState.set(providerId, {
+      inFlight: false,
+      pending: false,
+      pendingLogged: false,
+      startedAt: null
+    });
+  }
+  return providerRuntimeState.get(providerId);
+}
+
+function markProviderPending(state, providerId, slotKey, now) {
+  const runtime = providerRuntime(providerId);
+  runtime.pending = true;
+  const previous = state.system.providers?.[providerId] || {};
+  state.system.providers[providerId] = {
+    ...previous,
+    id: providerId,
+    status: "pending",
+    pending: true,
+    lastProcessedSlotAt: previous.lastProcessedSlotAt === slotKey ? previous.lastProcessedSlotAt : slotKey
+  };
+  if (!runtime.pendingLogged) {
+    addLog(state, `${providerLabel(providerId)} 조회 지연 - 이전 조회 진행 중, 종료 후 즉시 재조회 예정`, now);
+    runtime.pendingLogged = true;
+  }
+}
+
+function finishProviderRuntime(state, providerId, checkedAt, error = null) {
+  const runtime = providerRuntime(providerId);
+  const startedAt = runtime.startedAt;
+  const finishedAt = new Date(checkedAt);
+  const durationMs = startedAt ? Math.max(0, finishedAt.getTime() - startedAt.getTime()) : null;
+  inFlightProviders.delete(providerId);
+  runtime.inFlight = false;
+  runtime.startedAt = null;
+  state.system.providers[providerId] = {
+    ...(state.system.providers[providerId] || {}),
+    id: providerId,
+    status: runtime.pending ? "pending" : error ? "error" : "idle",
+    pending: runtime.pending,
+    lastFinishedAt: checkedAt,
+    lastDurationMs: durationMs,
+    lastError: error ? error.message : null
+  };
+}
+
+function runPendingProviderChecks(providerIds, options) {
+  for (const providerId of providerIds) {
+    const runtime = providerRuntime(providerId);
+    if (!runtime.pending || runtime.inFlight) continue;
+    runtime.pending = false;
+    runtime.pendingLogged = false;
+    runCheckCycle({
+      ...options,
+      source: "scheduler-pending",
+      targetProviderIds: [providerId],
+      forceDue: true,
+      now: new Date()
+    }).catch((error) => console.error(`${providerLabel(providerId)} pending check failed: ${error.message}`));
+  }
 }
 
 function summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders) {
@@ -620,6 +732,11 @@ export function countMatchingAvailableItems(state, reservations) {
   return matches.size;
 }
 
+export function resetSchedulerRuntimeForTests() {
+  inFlightProviders.clear();
+  providerRuntimeState.clear();
+}
+
 function normalizeOlympicWatch(watch) {
   return {
     ...watch,
@@ -645,21 +762,11 @@ export function startScheduler() {
     })
     .catch((error) => console.error(`Scheduler state update failed: ${error.message}`));
   const task = cron.schedule(expression, () => {
-    if (schedulerCycleRunning) {
-      loadState()
-        .then((state) => {
-          addLog(state, "조회 SKIP - 이전 조회 진행 중");
-          return saveState(state);
-        })
-        .catch((error) => console.error(`Scheduler overlap log failed: ${error.message}`));
-      return;
+    for (const providerId of Object.keys(PROVIDERS)) {
+      runCheckCycle({ targetProviderIds: [providerId] }).catch((error) => {
+        console.error(`${providerLabel(providerId)} check cycle failed: ${error.message}`);
+      });
     }
-    schedulerCycleRunning = true;
-    runCheckCycle().catch((error) => {
-      console.error(`Check cycle failed: ${error.message}`);
-    }).finally(() => {
-      schedulerCycleRunning = false;
-    });
   }, { timezone: SERVICE_TIME_ZONE });
   schedulerTask = task;
   console.log(`Scheduler started: provider polling due check every 1 minute.`);

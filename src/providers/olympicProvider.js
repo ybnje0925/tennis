@@ -3,9 +3,11 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config, assertOlympicLoginConfig } from "../config.js";
 import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
+import { createProviderTimer } from "../providerTiming.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
+const NAVIGATION_TIMEOUT_MS = 30_000;
 let olympicSessionPromise = null;
 let olympicSession = null;
 let olympicLoginPromise = null;
@@ -51,6 +53,7 @@ async function createOlympicSession(options = {}) {
   });
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(20_000);
+  page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
   const originalClose = context.close.bind(context);
   context.close = async (...args) => {
     try {
@@ -69,15 +72,15 @@ export async function closeOlympicSession() {
 }
 
 export async function isOlympicLoggedIn(page) {
-  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS }).catch(() => {});
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
   if (isOlympicDuplicateSessionText(body)) return false;
   return /로그아웃|마이페이지|신청내역/.test(body) && !/통합회원\s*ID로그인/.test(body);
 }
 
-export async function ensureOlympicLoggedIn(page) {
+export async function ensureOlympicLoggedIn(page, options = {}) {
   if (olympicLoginPromise) return olympicLoginPromise;
-  olympicLoginPromise = ensureOlympicLoggedInOnce(page);
+  olympicLoginPromise = ensureOlympicLoggedInOnce(page, options);
   try {
     return await olympicLoginPromise;
   } finally {
@@ -85,11 +88,12 @@ export async function ensureOlympicLoggedIn(page) {
   }
 }
 
-async function ensureOlympicLoggedInOnce(page) {
+async function ensureOlympicLoggedInOnce(page, options = {}) {
+  const timer = options.timer;
   console.info("[Olympic]");
   console.info("provider lock: acquired");
-  if (await isOlympicLoggedIn(page)) {
-    await openOlympicReservationPage(page).catch(() => {});
+  if (await maybeStep(timer, "로그인 상태 확인", () => isOlympicLoggedIn(page))) {
+    await openOlympicReservationPage(page, { timer }).catch(() => {});
     if (!/\/sso\/usr\/login\/view/.test(page.url())) {
       console.info("session source: existing");
       console.info("login required: no");
@@ -101,72 +105,78 @@ async function ensureOlympicLoggedInOnce(page) {
   console.info("session source: restored");
   console.info("login required: yes");
   assertOlympicLoginConfig();
-  await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  return maybeStep(timer, "로그인", async () => {
+    await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-  await page.locator("#login_id, input[name='login_id']").first().fill(config.olympicUserId);
-  await page.locator("#login_pwd, input[name='login_pwd'], input[type='password']").first().fill(config.olympicUserPassword);
+    await page.locator("#login_id, input[name='login_id']").first().fill(config.olympicUserId, { timeout: 10_000 });
+    await page.locator("#login_pwd, input[name='login_pwd'], input[type='password']").first().fill(config.olympicUserPassword, { timeout: 10_000 });
 
-  const dialogMessages = [];
-  let duplicateSessionDetected = false;
-  page.once("dialog", async (dialog) => {
-    const message = dialog.message();
-    dialogMessages.push(message);
-    if (isOlympicDuplicateSessionText(message)) duplicateSessionDetected = true;
-    await dialog.dismiss().catch(() => {});
+    const dialogMessages = [];
+    let duplicateSessionDetected = false;
+    page.once("dialog", async (dialog) => {
+      const message = dialog.message();
+      dialogMessages.push(message);
+      if (isOlympicDuplicateSessionText(message)) duplicateSessionDetected = true;
+      await dialog.dismiss().catch(() => {});
+    });
+
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
+      page.locator("button:has-text('로그인'), .btn_login").first().click({ timeout: 10_000 })
+    ]);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+    if (duplicateSessionDetected || isOlympicDuplicateSessionText(body)) {
+      console.warn("Olympic duplicate session detected.");
+      console.warn("Automatic session takeover skipped.");
+      console.info("duplicate login detected: yes");
+      throw new OlympicDuplicateSessionError();
+    }
+
+    await openOlympicReservationPage(page, { timer }).catch(() => {});
+
+    const loggedIn = await isOlympicLoggedIn(page) && !/\/sso\/usr\/login\/view/.test(page.url());
+    if (!loggedIn && dialogMessages.length > 0) {
+      throw new Error(`Olympic login failed: ${dialogMessages.at(-1)}`);
+    }
+    console.info("session source: new-login");
+    console.info("duplicate login detected: no");
+    return loggedIn;
   });
-
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
-    page.locator("button:has-text('로그인'), .btn_login").first().click()
-  ]);
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-  const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  if (duplicateSessionDetected || isOlympicDuplicateSessionText(body)) {
-    console.warn("Olympic duplicate session detected.");
-    console.warn("Automatic session takeover skipped.");
-    console.info("duplicate login detected: yes");
-    throw new OlympicDuplicateSessionError();
-  }
-
-  await openOlympicReservationPage(page).catch(() => {});
-
-  const loggedIn = await isOlympicLoggedIn(page) && !/\/sso\/usr\/login\/view/.test(page.url());
-  if (!loggedIn && dialogMessages.length > 0) {
-    throw new Error(`Olympic login failed: ${dialogMessages.at(-1)}`);
-  }
-  console.info("session source: new-login");
-  console.info("duplicate login detected: no");
-  return loggedIn;
 }
 
 export async function getAuthenticatedOlympicPage(options = {}) {
-  const session = await openOlympicSession(options);
+  const session = await maybeStep(options.timer, "브라우저 세션", () => openOlympicSession(options));
   console.info("[Olympic]");
   console.info(`session source: ${session.sessionSource}`);
-  const loggedIn = await ensureOlympicLoggedIn(session.page);
+  const loggedIn = await ensureOlympicLoggedIn(session.page, options);
   if (!loggedIn) throw new Error("Olympic login failed.");
   return session.page;
 }
 
-export async function openOlympicReservationPage(page) {
-  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+export async function openOlympicReservationPage(page, options = {}) {
+  const timer = options.timer;
+  await maybeStep(timer, "예약페이지 접근", async () => {
+    await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-  const reservationLink = page.locator("a.btn_app:visible, a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
-    reservationLink.click()
-  ]);
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-  await waitForOlympicCalendar(page).catch(() => {});
+    const reservationLink = page.locator("a.btn_app:visible, a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
+      reservationLink.click({ timeout: 10_000 })
+    ]);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await waitForOlympicCalendar(page).catch(() => {});
+  });
 }
 
-export async function selectCourtType(page, courtType) {
+export async function selectCourtType(page, courtType, options = {}) {
   const label = COURT_TYPES[courtType];
   if (!label) throw new Error(`Unknown Olympic court type: ${courtType}`);
 
-  await page.evaluate((targetText) => {
+  await maybeStep(options.timer, `코트 타입 선택 ${label}`, async () => {
+    await page.evaluate((targetText) => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
     const controls = Array.from(document.querySelectorAll("button, a, label, input[type='radio'], input[type='checkbox']"));
     const target = controls.find((element) => {
@@ -176,13 +186,14 @@ export async function selectCourtType(page, courtType) {
       return text.includes(targetText);
     });
     if (target) (target.querySelector("input") || target).click();
-  }, label);
-  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-  await page.waitForTimeout(300);
+    }, label);
+    await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+    await page.waitForTimeout(300);
+  });
 }
 
-export async function selectDate(page, date) {
-  const clicked = await page.evaluate(({ isoDate }) => {
+export async function selectDate(page, date, options = {}) {
+  const clicked = await maybeStep(options.timer, `날짜 선택 ${date}`, () => page.evaluate(({ isoDate }) => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
     const parsePeriod = (text) => {
       const full = normalize(text).match(/(20\d{2})\s*\.\s*([01]?\d)\s*\.\s*([0-3]?\d)\s*~\s*(?:(20\d{2})\s*\.\s*)?([01]?\d)\s*\.\s*([0-3]?\d)/);
@@ -256,7 +267,7 @@ export async function selectDate(page, date) {
     if (!possibleButton) return false;
     possibleButton.click();
     return true;
-  }, { isoDate: date });
+  }, { isoDate: date }));
 
   if (!clicked) throw new Error(`Olympic date selector not found for ${date}`);
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
@@ -472,11 +483,12 @@ export function filterOlympicSlotsByWatch(slots, watch) {
   ));
 }
 
-export async function fetchOlympicAvailabilityForDate(page, { date, courtType }) {
-  await openOlympicReservationPage(page);
-  await selectCourtType(page, courtType);
+export async function fetchOlympicAvailabilityForDate(page, { date, courtType }, options = {}) {
+  const timer = options.timer;
+  await openOlympicReservationPage(page, { timer });
+  await selectCourtType(page, courtType, { timer });
 
-  const calendar = await readOlympicCalendar(page);
+  const calendar = await maybeStep(timer, `날짜 상태 파싱 ${date}`, () => readOlympicCalendar(page));
   const dateStatus = findOlympicDateStatus(calendar, date);
   if (!dateStatus) {
     throw new OlympicDateLookupError(date, calendar);
@@ -485,14 +497,14 @@ export async function fetchOlympicAvailabilityForDate(page, { date, courtType })
     return { lookupStatus: DATE_LOOKUP_STATES.AVAILABLE_COUNT_ZERO, calendar, dateStatus, timeSlots: [], slots: [] };
   }
 
-  await selectDate(page, date);
+  await selectDate(page, date, { timer });
 
-  const timeSlots = (await parseOlympicTimeSlots(page, date, courtType)).filter((slot) => slot.available);
+  const timeSlots = (await maybeStep(timer, `예약 데이터 파싱 ${date}`, () => parseOlympicTimeSlots(page, date, courtType))).filter((slot) => slot.available);
   const slots = [];
   for (const timeSlot of timeSlots) {
     const selected = await selectTimeSlot(page, timeSlot);
     if (!selected) continue;
-    const courts = await parseAvailableOlympicCourts(page, timeSlot);
+    const courts = await maybeStep(timer, `코트 파싱 ${date} ${timeSlot.time}`, () => parseAvailableOlympicCourts(page, timeSlot));
     slots.push(...courts);
   }
 
@@ -511,15 +523,17 @@ export async function checkOlympicByWatches(watches) {
     }
   }
 
+  const timer = createProviderTimer("올림픽");
+  let errorForTimer = null;
   try {
-    const page = await getAuthenticatedOlympicPage();
+    const page = await getAuthenticatedOlympicPage({ timer });
 
     const allSlots = [];
     const failedDateLookups = new Set();
     for (const group of groups.values()) {
       if (failedDateLookups.has(group.date)) continue;
       try {
-        const result = await fetchOlympicAvailabilityForDate(page, group);
+        const result = await fetchOlympicAvailabilityForDate(page, group, { timer });
         allSlots.push(...result.slots);
       } catch (error) {
         if (!(error instanceof OlympicDateLookupError)) throw error;
@@ -531,6 +545,7 @@ export async function checkOlympicByWatches(watches) {
     }
     return uniqueOlympicSlots(allSlots);
   } catch (error) {
+    errorForTimer = error;
     if (error instanceof OlympicDuplicateSessionError) {
       const result = [];
       Object.defineProperty(result, CHECK_META, {
@@ -541,6 +556,8 @@ export async function checkOlympicByWatches(watches) {
       return result;
     }
     throw error;
+  } finally {
+    timer.end(errorForTimer);
   }
 }
 
@@ -746,4 +763,8 @@ function selectedByWatchTimes(slot, wantedTimes) {
   if (wantedTimes.size === 0) return false;
   if (!slot.segments) return wantedTimes.has(slot.time);
   return slot.segments.every((segment) => wantedTimes.has(segment));
+}
+
+function maybeStep(timer, label, fn) {
+  return timer ? timer.step(label, fn) : fn();
 }

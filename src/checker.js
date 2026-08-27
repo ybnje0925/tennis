@@ -5,6 +5,7 @@ import { parseReservationDom } from "./parser.js";
 import { normalizeDate } from "./normalization.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
+import { createProviderTimer } from "./providerTiming.js";
 import { fileURLToPath } from "node:url";
 
 const providerLocks = new Map();
@@ -13,16 +14,19 @@ export const CHECK_META = Symbol.for("tennis.checkMeta");
 export async function checkVenue(page, venueId, options = {}) {
   const venue = VENUES[venueId];
   if (!venue) throw new Error(`Unknown venue: ${venueId}`);
+  const timer = options.timer;
 
-  await page.goto(venue.url, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  await maybeStep(timer, `${venue.name} 페이지 접근`, async () => {
+    await page.goto(venue.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  });
 
   if (await looksLikeProtectionOrLogin(page)) {
     throw new Error(`${venue.name} 예약현황이 실제 달력이 아니라 로그인/보호 페이지로 보입니다.`);
   }
 
   if (!options.dates || options.dates.length === 0) {
-    const reservations = await parseReservationDom(page, venueId);
+    const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseReservationDom(page, venueId));
     if (reservations.length === 0) {
       throw new Error(`${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
     }
@@ -32,14 +36,14 @@ export async function checkVenue(page, venueId, options = {}) {
   const datesByMonth = groupDatesByMonth(options.dates);
   const results = [];
   for (const [targetMonth, dates] of datesByMonth) {
-    await moveGangdongCalendarToMonth(page, targetMonth);
+    await maybeStep(timer, `${venue.name} 날짜 선택 ${targetMonth}`, () => moveGangdongCalendarToMonth(page, targetMonth));
     const calendar = await inspectGangdongCalendar(page);
     const missingCells = dates.filter((date) => !calendar.dates.some((item) => item.date === date));
     if (missingCells.length > 0) {
       throw new Error(`CALENDAR_DATE_NOT_FOUND: ${venue.name} 날짜 cell을 찾지 못했습니다 (${missingCells.join(", ")})`);
     }
 
-    const reservations = await parseReservationDom(page, venueId);
+    const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseReservationDom(page, venueId));
     const hasSlotData = dates.some((date) => {
       const inspected = calendar.dates.find((item) => item.date === date);
       return inspected?.slotElementCount > 0;
@@ -177,24 +181,30 @@ export async function checkGangdongVenues(venueIds, options = {}) {
   const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "gangdong");
   if (ids.length === 0) return {};
 
-  const { context, page } = await openGangdongSession();
+  const timer = createProviderTimer("강동");
+  let errorForTimer = null;
+  const { context, page } = await timer.step("브라우저 세션", () => openGangdongSession());
   try {
-    const loggedIn = await ensureLoggedIn(page);
+    const loggedIn = await ensureLoggedIn(page, { timer });
     if (!loggedIn) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
 
     const result = {};
     const errors = [];
     for (const venueId of ids) {
       try {
-        result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId] });
+        result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId], timer });
       } catch (error) {
         errors.push({ provider: "gangdong", venueId, message: error.message });
         console.warn(`강동: ${VENUES[venueId]?.name || venueId} 조회 실패`);
       }
     }
     return withCheckMeta(result, { errors });
+  } catch (error) {
+    errorForTimer = error;
+    throw error;
   } finally {
-    await context.close();
+    await Promise.resolve(context.close()).catch((error) => console.warn(`강동 브라우저 세션 종료 실패: ${error.message}`));
+    timer.end(errorForTimer);
   }
 }
 
@@ -211,20 +221,22 @@ export async function checkAllVenues(options = {}) {
   const result = {};
   const venueDates = buildVenueDateTargets(watches);
   const meta = { errors: [] };
-  const gangdong = await safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates }));
+  const olympicWatches = watches.filter(isOlympicWatch);
+  const providerChecks = [
+    safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
+    safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches))),
+    olympicWatches.length > 0 && config.enableOlympicProvider
+      ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
+      : Promise.resolve([])
+  ];
+  const [gangdong, songpa, olympicResult] = await Promise.all(providerChecks);
+
   Object.assign(result, stripCheckMeta(gangdong));
   meta.errors.push(...getCheckErrors(gangdong));
-
-  const songpa = await safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches)));
   Object.assign(result, stripCheckMeta(songpa));
   meta.errors.push(...getCheckErrors(songpa));
-
-  const olympicWatches = watches.filter(isOlympicWatch);
-  if (olympicWatches.length > 0 && config.enableOlympicProvider) {
-    const olympicResult = await safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches));
-    meta.errors.push(...getCheckErrors(olympicResult));
-    if (olympicResult) result.olympic = olympicResult;
-  }
+  meta.errors.push(...getCheckErrors(olympicResult));
+  if (olympicWatches.length > 0 && config.enableOlympicProvider && olympicResult) result.olympic = olympicResult;
   return withCheckMeta(result, meta);
 }
 
@@ -273,6 +285,10 @@ function stripCheckMeta(result) {
 
 function getCheckErrors(result) {
   return result?.[CHECK_META]?.errors || [];
+}
+
+function maybeStep(timer, label, fn) {
+  return timer ? timer.step(label, fn) : fn();
 }
 
 export function buildVenueDateTargets(watches) {

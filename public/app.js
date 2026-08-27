@@ -80,12 +80,18 @@ function formatDateTime(value) {
 }
 
 function formatProviderStatus(status, providerId, active) {
+  if (status.currentUserActiveWatchCount === 0) return "현재 계정 조회 대상 아님";
   if (!active) return "미사용";
   const provider = status.providers?.[providerId] || {};
   if (provider.monitoringStatus === "outside-hours") {
     return `운영시간 외 · ${formatDateTime(provider.nextCheckAt)}부터 조회`;
   }
-  return `감시 중 · ${formatDateTime(status.lastRunAt)} → ${formatDateTime(status.nextRunAt)}`;
+  const stateLabel = provider.status === "running"
+    ? "조회 중"
+    : provider.status === "pending"
+      ? "지연 조회 대기"
+      : "감시 중";
+  return `${stateLabel} · ${formatDateTime(provider.lastCheckedAt || status.lastRunAt)} → ${formatDateTime(provider.nextCheckAt || status.nextRunAt)}`;
 }
 
 function formatDate(value) {
@@ -167,7 +173,7 @@ async function loadStatus() {
 async function loadWatches() {
   const watches = await request("/api/watches");
   if (watches.length === 0) {
-    watchesEl.innerHTML = `<p class="empty">아직 등록된 알림 조건이 없습니다.</p>`;
+    watchesEl.innerHTML = `<p class="empty">등록된 알림이 없어 현재 계정은 조회 대상이 아닙니다.</p>`;
     return;
   }
   watchesEl.innerHTML = sortWatchesByReservationTime(watches)

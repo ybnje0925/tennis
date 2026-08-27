@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildCycleSummary,
   buildVenueDateTargets,
@@ -9,11 +9,16 @@ import {
   keyFor,
   nextFixedSlotAt,
   nextProviderMonitoringStartAt,
+  resetSchedulerRuntimeForTests,
   runCheckCycle,
   syncProviderSchedule
 } from "../src/monitor.js";
 import { CHECK_META } from "../src/checker.js";
 import { PROVIDERS } from "../src/constants.js";
+
+beforeEach(() => {
+  resetSchedulerRuntimeForTests();
+});
 
 function state(overrides = {}) {
   return {
@@ -195,6 +200,10 @@ function olympicSlot() {
   };
 }
 
+function summaryLog(current) {
+  return current.system.logs.find((line) => line.includes("조회완료"));
+}
+
 function withProviderPolling(values, callback) {
   const previous = Object.fromEntries(
     Object.keys(values).map((providerId) => [providerId, PROVIDERS[providerId].pollingMinutes])
@@ -350,9 +359,8 @@ describe("runCheckCycle active watch targeting", () => {
 
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
-    expect(current.system.logs).toHaveLength(1);
-    expect(current.system.logs[0]).toContain("조회완료 | 강동 1/1✓ | 빈자리 0건");
-    expect(current.system.logs[0]).not.toContain("결과 없음");
+    expect(summaryLog(current)).toContain("조회완료 | 강동 1/1✓ | 빈자리 0건");
+    expect(summaryLog(current)).not.toContain("결과 없음");
   });
 
   it("summarizes vacancies and sent alerts separately", async () => {
@@ -364,7 +372,7 @@ describe("runCheckCycle active watch targeting", () => {
 
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
-    expect(current.system.logs[0]).toContain("빈자리 1건 → 알림 1건");
+    expect(summaryLog(current)).toContain("빈자리 1건 → 알림 1건");
   });
 
   it("routes notifications to the matching user's Telegram chat only", async () => {
@@ -517,6 +525,94 @@ describe("runCheckCycle active watch targeting", () => {
     expect(checker).toHaveBeenCalledTimes(1);
   });
 
+  it("runs one pending provider check after a delayed 5-minute slot finishes", async () => {
+    let releaseFirst;
+    const checker = vi.fn(() => new Promise((resolve) => {
+      releaseFirst = () => resolve({ gangil: [] });
+    }));
+    checker.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseFirst = () => resolve({ gangil: [] });
+    }));
+    checker.mockImplementationOnce(async () => ({ gangil: [] }));
+    const current = state();
+    const runner = makeRunner(current, checker);
+
+    const first = runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:00:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:05:00.000Z") });
+
+    expect(current.system.providers.gangdong.pending).toBe(true);
+    expect(current.system.logs.filter((line) => line.includes("강동 조회 지연"))).toHaveLength(1);
+
+    releaseFirst();
+    await first;
+    await vi.waitFor(() => expect(checker).toHaveBeenCalledTimes(2));
+    expect(current.system.logs.some((line) => line.includes("강동 지연 조회 START"))).toBe(true);
+  });
+
+  it("coalesces multiple missed provider slots into one pending rerun", async () => {
+    let releaseFirst;
+    const checker = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseFirst = () => resolve({ gangil: [] });
+      }))
+      .mockImplementation(async () => ({ gangil: [] }));
+    const current = state();
+    const runner = makeRunner(current, checker);
+
+    const first = runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:00:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:05:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:10:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:15:00.000Z") });
+
+    expect(current.system.logs.filter((line) => line.includes("강동 조회 지연"))).toHaveLength(1);
+
+    releaseFirst();
+    await first;
+    await vi.waitFor(() => expect(checker).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps provider locks independent when Songpa is slow", async () => {
+    let releaseSongpa;
+    const watches = [
+      { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "o", userId: "u1", provider: "olympic", venues: ["olympic"], date: "2026-08-29", times: ["18:00~19:00"], enabled: true }
+    ];
+    const checker = vi.fn(({ watches }) => {
+      if (watches.some((watch) => watch.id === "s")) {
+        return new Promise((resolve) => {
+          releaseSongpa = () => resolve({ "songpa-oryun": [] });
+        });
+      }
+      if (watches.some((watch) => watch.id === "o")) return Promise.resolve({ olympic: [] });
+      return Promise.resolve({ gangil: [] });
+    });
+    const current = state({ watches });
+    const runner = makeRunner(current, checker);
+
+    const songpa = runCheckCycle({ ...runner, targetProviderIds: ["songpa"], now: new Date("2026-08-24T12:00:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:00:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["olympic"], now: new Date("2026-08-24T12:00:00.000Z") });
+
+    expect(checker.mock.calls.map(([arg]) => arg.watches.map((watch) => watch.id).join(","))).toEqual(["s", "g", "o"]);
+    releaseSongpa();
+    await songpa;
+  });
+
+  it("releases the provider lock after checker errors", async () => {
+    const checker = vi.fn()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce({ gangil: [] });
+    const current = state();
+    const runner = makeRunner(current, checker);
+
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:00:00.000Z") });
+    await runCheckCycle({ ...runner, targetProviderIds: ["gangdong"], now: new Date("2026-08-24T12:05:00.000Z") });
+
+    expect(checker).toHaveBeenCalledTimes(2);
+    expect(current.system.providers.gangdong.status).toBe("idle");
+  });
+
   it("does not mark a provider as successful in logs when it was not due or checked", async () => {
     const current = state({
       watches: [
@@ -536,9 +632,9 @@ describe("runCheckCycle active watch targeting", () => {
     await withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, async () => {
       await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-24T17:55:00.000Z") });
 
-      expect(current.system.logs[0]).toContain("강동 1/1✓");
-      expect(current.system.logs[0]).toContain("송파 1/1✓");
-      expect(current.system.logs[0]).not.toContain("올림픽✓");
+      expect(summaryLog(current)).toContain("강동 1/1✓");
+      expect(summaryLog(current)).toContain("송파 1/1✓");
+      expect(summaryLog(current)).not.toContain("올림픽✓");
     });
   });
 
@@ -561,9 +657,9 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-25T23:30:00.000Z") });
 
     expect(checker).toHaveBeenCalledTimes(1);
-    expect(current.system.logs[0]).toContain("강동 1/1✓");
-    expect(current.system.logs[0]).toContain("송파 1/1✓");
-    expect(current.system.logs[0]).toContain("올림픽 SKIP(운영시간 외)");
+    expect(summaryLog(current)).toContain("강동 1/1✓");
+    expect(summaryLog(current)).toContain("송파 1/1✓");
+    expect(summaryLog(current)).toContain("올림픽 SKIP(운영시간 외)");
   });
 
   it("checks Olympic during monitoring hours", async () => {
@@ -576,7 +672,7 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:00:00.000Z") });
 
     expect(checker).toHaveBeenCalledTimes(1);
-    expect(current.system.logs[0]).toContain("올림픽✓");
+    expect(summaryLog(current)).toContain("올림픽✓");
   });
 
   it("stores scheduler run times from the same cycle clock used by logs", async () => {
@@ -587,7 +683,7 @@ describe("runCheckCycle active watch targeting", () => {
 
     await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:50:00.000Z") });
 
-    expect(current.system.logs[0]).toContain("[09:50] 조회완료");
+    expect(summaryLog(current)).toContain("[09:50] 조회완료");
     expect(current.system.lastRunAt).toBe(current.system.lastRun.runFinishedAt);
     expect(current.system.nextRunAt).toBe("2026-08-26T00:55:00.000Z");
     expect(current.system.nextCheckAt).toBe(current.system.nextRunAt);
