@@ -3,11 +3,12 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config, assertSongpaLoginConfig } from "../config.js";
 import { PROVIDERS, SONGPA_LOGIN_URL, TIME_SLOTS, VENUES } from "../constants.js";
-import { createProviderTimer } from "../providerTiming.js";
+import { createProviderTimer, withTimeout } from "../providerTiming.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "songpa-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
 const NAVIGATION_TIMEOUT_MS = 30_000;
+const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
 
 export const songpaProvider = {
   ...PROVIDERS.songpa,
@@ -20,11 +21,16 @@ export function isSongpaWatch(watch) {
 
 export async function openSongpaSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
-  const context = await chromium.launchPersistentContext(SESSION_DIR, {
-    headless: options.headless ?? config.headless,
-    viewport: { width: 1365, height: 900 },
-    locale: "ko-KR"
-  });
+  const context = await withTimeout(
+    chromium.launchPersistentContext(SESSION_DIR, {
+      headless: options.headless ?? config.headless,
+      viewport: { width: 1365, height: 900 },
+      locale: "ko-KR"
+    }),
+    BROWSER_LAUNCH_TIMEOUT_MS,
+    "송파",
+    "브라우저 실행"
+  );
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(20_000);
   page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);

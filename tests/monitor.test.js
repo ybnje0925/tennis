@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   buildCycleSummary,
   buildVenueDateTargets,
@@ -202,6 +203,30 @@ function olympicSlot() {
 
 function summaryLog(current) {
   return current.system.logs.find((line) => line.includes("조회완료"));
+}
+
+function makeConcurrentStateHarness(initial) {
+  let current = structuredClone(initial);
+  let queue = Promise.resolve();
+  return {
+    get current() {
+      return current;
+    },
+    stateLoader: vi.fn(async () => structuredClone(current)),
+    stateSaver: vi.fn(async (next) => {
+      current = structuredClone(next);
+    }),
+    stateUpdater: vi.fn((mutator) => {
+      const run = queue.then(async () => {
+        const latest = structuredClone(current);
+        const result = await mutator(latest);
+        current = latest;
+        return result === undefined ? latest : result;
+      });
+      queue = run.catch(() => {});
+      return run;
+    })
+  };
 }
 
 function withProviderPolling(values, callback) {
@@ -599,6 +624,96 @@ describe("runCheckCycle active watch targeting", () => {
     await songpa;
   });
 
+  it("merges concurrent provider completions without stale state overwrites", async () => {
+    let releaseGangdong;
+    const watches = [
+      { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }
+    ];
+    const harness = makeConcurrentStateHarness(state({ watches }));
+    const checker = vi.fn(({ watches }) => {
+      if (watches.some((watch) => watch.id === "g")) {
+        return new Promise((resolve) => {
+          releaseGangdong = () => resolve({ gangil: [slot({ available: false, availableCount: 0 })] });
+        });
+      }
+      return Promise.resolve({
+        "songpa-oryun": [slot({ venue: "songpa-oryun", venueName: "오륜테니스장", available: false, availableCount: 0 })]
+      });
+    });
+
+    const gangdong = runCheckCycle({
+      checker,
+      notifier: vi.fn(),
+      ...harness,
+      targetProviderIds: ["gangdong"],
+      now: new Date("2026-08-27T13:00:00.000Z")
+    });
+    const songpa = runCheckCycle({
+      checker,
+      notifier: vi.fn(),
+      ...harness,
+      targetProviderIds: ["songpa"],
+      now: new Date("2026-08-27T13:00:00.000Z")
+    });
+
+    await songpa;
+    releaseGangdong();
+    await gangdong;
+
+    expect(harness.current.system.providers.gangdong.lastCheckedAt).toBeTruthy();
+    expect(harness.current.system.providers.songpa.lastCheckedAt).toBeTruthy();
+    expect(harness.current.system.logs.some((line) => line.includes("강동 1/1✓"))).toBe(true);
+    expect(harness.current.system.logs.some((line) => line.includes("송파 1/1✓"))).toBe(true);
+  });
+
+  it("keeps concurrent provider logs instead of overwriting them", async () => {
+    const watches = [
+      { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }
+    ];
+    const harness = makeConcurrentStateHarness(state({ watches }));
+    const checker = vi.fn(({ watches }) => Promise.resolve(
+      watches.some((watch) => watch.id === "g")
+        ? { gangil: [slot({ available: false, availableCount: 0 })] }
+        : { "songpa-oryun": [slot({ venue: "songpa-oryun", venueName: "오륜테니스장", available: false, availableCount: 0 })] }
+    ));
+
+    await Promise.all([
+      runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["gangdong"], now: new Date("2026-08-27T13:00:00.000Z") }),
+      runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["songpa"], now: new Date("2026-08-27T13:00:00.000Z") })
+    ]);
+
+    const summaries = harness.current.system.logs.filter((line) => line.includes("조회완료"));
+    expect(summaries.some((line) => line.includes("강동 1/1✓"))).toBe(true);
+    expect(summaries.some((line) => line.includes("송파 1/1✓"))).toBe(true);
+  });
+
+  it("does not move Gangdong lastCheckedAt backward when Songpa finishes from an older planning snapshot", async () => {
+    let releaseSongpa;
+    const watches = [
+      { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }
+    ];
+    const harness = makeConcurrentStateHarness(state({ watches }));
+    const checker = vi.fn(({ watches }) => {
+      if (watches.some((watch) => watch.id === "s")) {
+        return new Promise((resolve) => {
+          releaseSongpa = () => resolve({ "songpa-oryun": [] });
+        });
+      }
+      return Promise.resolve({ gangil: [] });
+    });
+
+    const songpa = runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["songpa"], now: new Date("2026-08-27T13:00:00.000Z") });
+    await runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["gangdong"], now: new Date("2026-08-27T13:05:00.000Z") });
+    const gangdongCheckedAt = harness.current.system.providers.gangdong.lastCheckedAt;
+    releaseSongpa();
+    await songpa;
+
+    expect(harness.current.system.providers.gangdong.lastCheckedAt).toBe(gangdongCheckedAt);
+  });
+
   it("releases the provider lock after checker errors", async () => {
     const checker = vi.fn()
       .mockRejectedValueOnce(new Error("boom"))
@@ -808,6 +923,30 @@ describe("syncProviderSchedule", () => {
     expect(current.system.providers.gangdong.status).toBe("idle");
   });
 
+  it("recovers a stale 11:05 nextCheckAt to the next 22:10 KST fixed slot", () => {
+    const current = state({
+      system: {
+        lastCheckedAt: null,
+        nextCheckAt: "2026-08-27T02:05:00.000Z",
+        venues: {},
+        logs: [],
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: true,
+            pollingMinutes: 5,
+            lastCheckedAt: "2026-08-27T01:56:00.000Z",
+            nextCheckAt: "2026-08-27T02:05:00.000Z"
+          }
+        }
+      }
+    });
+
+    syncProviderSchedule(current, ["gangdong"], new Date("2026-08-27T13:07:00.000Z"));
+
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-27T13:10:00.000Z");
+  });
+
   it("tracks mixed provider polling independently and avoids a misleading aggregate next time", () => {
     const current = state();
 
@@ -847,6 +986,29 @@ describe("nextFixedSlotAt", () => {
 
   it("sets the next check from restart time to the next fixed slot", () => {
     expect(nextFixedSlotAt(new Date("2026-08-24T10:52:00.000Z"), 5)).toBe("2026-08-24T10:55:00.000Z");
+  });
+
+  it("keeps UTC storage while mapping 13:07Z to the 22:10 KST slot", () => {
+    const formatter = new Intl.DateTimeFormat("ko-KR", {
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Seoul"
+    });
+
+    expect(formatter.format(new Date("2026-08-27T13:07:00.000Z"))).toContain("22:07");
+    expect(nextFixedSlotAt(new Date("2026-08-27T13:07:00.000Z"), 5)).toBe("2026-08-27T13:10:00.000Z");
+  });
+});
+
+describe("legacy scheduler code", () => {
+  it("does not generate the old global overlap log in runtime source", async () => {
+    const monitorSource = await readFile(new URL("../src/monitor.js", import.meta.url), "utf8");
+
+    expect(monitorSource).not.toContain("조회 SKIP - 이전 조회 진행 중");
+    expect(monitorSource).not.toContain("schedulerCycleRunning");
   });
 });
 

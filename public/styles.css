@@ -297,6 +297,12 @@ button.primary {
   border-bottom: 1px solid #edf2ec;
 }
 
+.build-info {
+  margin-top: 10px;
+  color: #7c8a80;
+  font-size: 12px;
+}
+
 .empty {
   color: #617064;
 }

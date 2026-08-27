@@ -21,6 +21,7 @@ const testToolsEl = document.querySelector("#testTools");
 const logsEl = document.querySelector("#logs");
 const lastCheckedEl = document.querySelector("#lastChecked");
 const nextCheckEl = document.querySelector("#nextCheck");
+const buildInfoEl = document.querySelector("#buildInfo");
 const gangilStatusEl = document.querySelector("#gangilStatus");
 const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
@@ -91,7 +92,10 @@ function formatProviderStatus(status, providerId, active) {
     : provider.status === "pending"
       ? "지연 조회 대기"
       : "감시 중";
-  return `${stateLabel} · ${formatDateTime(provider.lastCheckedAt || status.lastRunAt)} → ${formatDateTime(provider.nextCheckAt || status.nextRunAt)}`;
+  if (provider.status === "running") {
+    return `${stateLabel} · ${formatDateTime(provider.lastStartedAt)} 시작`;
+  }
+  return `${stateLabel} · ${formatDateTime(provider.lastCheckedAt)} → ${formatDateTime(provider.nextCheckAt)}`;
 }
 
 function formatDate(value) {
@@ -157,8 +161,8 @@ function isPublicHttpUrl(value) {
 
 async function loadStatus() {
   const status = await request("/api/status");
-  lastCheckedEl.textContent = formatDateTime(status.lastRunAt);
-  nextCheckEl.textContent = formatDateTime(status.nextRunAt);
+  lastCheckedEl.textContent = formatDateTime(status.currentUserLastCheckedAt);
+  nextCheckEl.textContent = formatDateTime(status.currentUserNextCheckAt);
   const gangdongActive = Boolean(status.activeVenues?.gangil || status.activeVenues?.myeongil);
   const songpaActive = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id]);
   gangilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
@@ -168,6 +172,12 @@ async function loadStatus() {
   logsEl.innerHTML = (status.logs || []).length
     ? status.logs.slice().reverse().map((line) => `<div>${line}</div>`).join("")
     : `<p class="empty">아직 로그가 없습니다.</p>`;
+  buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
+}
+
+function shortCommit(value) {
+  if (!value || value === "unknown") return "unknown";
+  return String(value).slice(0, 7);
 }
 
 async function loadWatches() {

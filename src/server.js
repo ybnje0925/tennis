@@ -14,18 +14,24 @@ import {
   getUserBySessionToken,
   loadState,
   saveState,
+  updateState,
   updateWatch
 } from "./storage.js";
 import { sendTelegramMessage } from "./telegramNotifier.js";
 import {
+  activeProviderVenueIds,
   buildVenueDateTargets,
   getActiveWatches,
   groupActiveWatchesByVenue,
+  nextFixedSlotAt,
+  providerPollingMinutes,
   runCheckCycle,
   SCHEDULER_VERSION,
-  startScheduler
+  startScheduler,
+  syncProviderSchedule
 } from "./monitor.js";
 import { validateVenueSelection } from "./venueRules.js";
+import { buildInfo } from "./buildInfo.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -98,7 +104,7 @@ function rateLimitKeyFor(req) {
 }
 
 app.get("/health", (req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, schedulerVersion: SCHEDULER_VERSION, ...buildInfo() });
 });
 
 app.get("/api/options", requireUser, (req, res) => {
@@ -202,26 +208,80 @@ app.get("/api/watches", requireUser, async (req, res, next) => {
 
 app.get("/api/status", requireUser, async (req, res, next) => {
   try {
-    const state = await loadState();
-    const userWatches = state.watches.filter((watch) => watch.userId === req.user.id);
-    const activeUserWatches = getActiveWatches({ ...state, watches: userWatches });
-    const activeByVenue = groupActiveWatchesByVenue(activeUserWatches);
-    res.json({
-      ...state.system,
-      schedulerVersion: SCHEDULER_VERSION,
-      currentUserWatchCount: userWatches.length,
-      currentUserActiveWatchCount: activeUserWatches.length,
-      activeVenues: Object.fromEntries(
-        Object.keys(VENUES).map((venueId) => [
-          venueId,
-          activeByVenue[venueId]?.length > 0 && (VENUES[venueId].provider !== "olympic" || config.enableOlympicProvider)
-        ])
-      )
+    const now = new Date();
+    const payload = await updateState((state) => {
+      normalizeSchedulerStateForStatus(state, now);
+      return buildStatusPayload(state, req.user.id, now);
     });
+    res.json(payload);
   } catch (error) {
     next(error);
   }
 });
+
+function normalizeSchedulerStateForStatus(state, now) {
+  const activeWatches = getActiveWatches(state);
+  const activeByVenue = groupActiveWatchesByVenue(activeWatches);
+  const activeVenueIds = Object.keys(buildVenueDateTargets(activeByVenue)).filter((venueId) => (
+    VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
+  ));
+  syncProviderSchedule(state, Array.from(activeProviderVenueIds(activeVenueIds).keys()), now);
+
+  for (const provider of Object.values(state.system.providers || {})) {
+    if (!provider?.active || !provider.nextCheckAt) continue;
+    if (Date.parse(provider.nextCheckAt) < now.getTime() - 5_000) {
+      provider.nextCheckAt = nextFixedSlotAt(now, providerPollingMinutes(provider.id));
+      provider.staleSchedule = true;
+    } else {
+      provider.staleSchedule = false;
+    }
+  }
+}
+
+function buildStatusPayload(state, userId, now) {
+  const userWatches = state.watches.filter((watch) => watch.userId === userId);
+  const activeUserWatches = getActiveWatches({ ...state, watches: userWatches });
+  const activeByVenue = groupActiveWatchesByVenue(activeUserWatches);
+  const activeVenueIds = Object.keys(buildVenueDateTargets(activeByVenue)).filter((venueId) => (
+    VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
+  ));
+  const activeUserProviderIds = Array.from(activeProviderVenueIds(activeVenueIds).keys());
+  const activeUserProviders = activeUserProviderIds
+    .map((providerId) => state.system.providers?.[providerId])
+    .filter(Boolean);
+  const currentUserLastCheckedAt = latestIso(activeUserProviders.map((provider) => provider.lastCheckedAt));
+  const currentUserNextCheckAt = earliestIso(
+    activeUserProviders
+      .map((provider) => provider.nextCheckAt)
+      .filter((value) => value && Date.parse(value) >= now.getTime() - 5_000)
+  );
+
+  return {
+    ...state.system,
+    schedulerVersion: SCHEDULER_VERSION,
+    ...buildInfo(now),
+    currentUserWatchCount: userWatches.length,
+    currentUserActiveWatchCount: activeUserWatches.length,
+    currentUserLastCheckedAt,
+    currentUserNextCheckAt,
+    activeVenues: Object.fromEntries(
+      Object.keys(VENUES).map((venueId) => [
+        venueId,
+        activeByVenue[venueId]?.length > 0 && (VENUES[venueId].provider !== "olympic" || config.enableOlympicProvider)
+      ])
+    )
+  };
+}
+
+function latestIso(values) {
+  const sorted = values.filter(Boolean).sort();
+  return sorted.at(-1) || null;
+}
+
+function earliestIso(values) {
+  const sorted = values.filter(Boolean).sort();
+  return sorted[0] || null;
+}
 
 app.post("/api/watches", requireUser, async (req, res, next) => {
   try {

@@ -198,6 +198,14 @@ describe("checkAllVenues targeting", () => {
     expect(second).toEqual({});
     expect(running).toHaveBeenCalledTimes(1);
   });
+
+  it("releases the provider lock after a provider hard timeout", async () => {
+    await expect(runProviderCheck("gangdong", () => new Promise(() => {}), { timeoutMs: 5 })).rejects.toMatchObject({
+      code: "PROVIDER_TIMEOUT"
+    });
+
+    await expect(runProviderCheck("gangdong", async () => ({ gangil: [] }), { timeoutMs: 100 })).resolves.toEqual({ gangil: [] });
+  });
 });
 
 describe("Gangdong calendar month navigation", () => {

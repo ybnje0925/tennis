@@ -3,17 +3,24 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config, assertLoginConfig } from "./config.js";
 import { LOGIN_URL } from "./constants.js";
+import { withTimeout } from "./providerTiming.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "gangdong-profile");
 const NAVIGATION_TIMEOUT_MS = 30_000;
+const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
 
 export async function openGangdongSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
-  const context = await chromium.launchPersistentContext(SESSION_DIR, {
-    headless: options.headless ?? config.headless,
-    viewport: { width: 1365, height: 900 },
-    locale: "ko-KR"
-  });
+  const context = await withTimeout(
+    chromium.launchPersistentContext(SESSION_DIR, {
+      headless: options.headless ?? config.headless,
+      viewport: { width: 1365, height: 900 },
+      locale: "ko-KR"
+    }),
+    BROWSER_LAUNCH_TIMEOUT_MS,
+    "강동",
+    "브라우저 실행"
+  );
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(20_000);
   page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);

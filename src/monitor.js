@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { PROVIDERS, VENUES } from "./constants.js";
 import { CHECK_META, checkAllVenues } from "./checker.js";
 import { buildNotificationMessage, sendTelegram } from "./telegram.js";
-import { loadState, saveState } from "./storage.js";
+import { loadState, saveState, updateState } from "./storage.js";
 import {
   filterOlympicSlotsByWatch,
   isOlympicWatch,
@@ -301,20 +301,18 @@ function schedulerIntervalMinutes(providerIds = Object.keys(PROVIDERS)) {
   return Math.min(...values);
 }
 
-export async function runCheckCycle({
-  checker = checkAllVenues,
-  notifier = sendTelegram,
-  stateLoader = loadState,
-  stateSaver = saveState,
-  source = "scheduler",
-  now = new Date(),
-  targetProviderIds = null,
-  forceDue = false
-} = {}) {
-  const state = await stateLoader();
-  const runStartedAt = now.toISOString();
-  state.system.providers ||= {};
-  const usersById = new Map((state.users || []).map((user) => [user.id, user]));
+function createStateUpdater(stateLoader, stateSaver, stateUpdater) {
+  if (stateUpdater) return stateUpdater;
+  if (stateLoader === loadState && stateSaver === saveState) return updateState;
+  return async (mutator) => {
+    const latest = await stateLoader();
+    const result = await mutator(latest);
+    await stateSaver(latest);
+    return result === undefined ? latest : result;
+  };
+}
+
+function activeContextFor(state) {
   const activeWatches = getActiveWatches(state);
   const grouped = groupActiveWatchesByVenue(activeWatches);
   const venueDates = buildVenueDateTargets(grouped);
@@ -322,171 +320,74 @@ export async function runCheckCycle({
     VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
   ));
   const activeProviders = activeProviderVenueIds(activeVenueIds);
-  const runIntervalMinutes = schedulerIntervalMinutes(activeProviders.keys());
-  state.system.lastRun = {
-    runStartedAt,
-    runFinishedAt: null,
-    nextRunAt: nextFixedSlotAt(now, runIntervalMinutes),
-    facilities: {}
-  };
-  state.system.nextRunAt = state.system.lastRun.nextRunAt;
-  state.system.nextCheckAt = state.system.nextRunAt;
-  syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
+  return { activeWatches, grouped, venueDates, activeVenueIds, activeProviders };
+}
 
-  if (activeWatches.length === 0 || activeVenueIds.length === 0) {
-    const checkedAt = new Date().toISOString();
-    if (source !== "scheduler") {
-      state.system.lastCheckedAt = checkedAt;
-      addLog(state, "No active alerts. Skipping all reservation checks.");
-    }
-    await stateSaver(state);
-    return { checkedAt, reservations: [], notifications: [], errors: [], skipped: true };
+function mergeProviderStart(state, providerIds, { now, source, slotKey, activeProviderIds }) {
+  state.system.providers ||= {};
+  syncProviderSchedule(state, activeProviderIds, now);
+  for (const providerId of providerIds) {
+    const runtime = providerRuntime(providerId);
+    runtime.inFlight = true;
+    runtime.startedAt ||= new Date();
+    state.system.providers[providerId] = {
+      ...(state.system.providers[providerId] || {}),
+      id: providerId,
+      active: true,
+      status: "running",
+      pending: false,
+      lastStartedAt: runtime.startedAt.toISOString(),
+      lastError: null,
+      lastProcessedSlotAt: slotKey
+    };
+    addLog(state, `${providerLabel(providerId)} ${source === "scheduler-pending" ? "지연" : "정규"} 조회 START`, now);
   }
+}
 
-  const requestedProviderIds = targetProviderIds
-    ? new Set(targetProviderIds.filter((providerId) => activeProviders.has(providerId)))
-    : null;
-  let targetVenueIds = requestedProviderIds
-    ? activeVenueIds.filter((venueId) => requestedProviderIds.has(VENUES[venueId]?.provider))
-    : activeVenueIds;
-  let targetWatches = activeWatches;
-  let selectedProviderIds = requestedProviderIds ? Array.from(requestedProviderIds) : Array.from(activeProviders.keys());
-  const skippedProviders = selectedProviderIds
-    .filter((providerId) => !isProviderWithinMonitoringHours(providerId, now))
-    .map((provider) => ({ provider, reason: "운영시간 외" }));
-  const skippedProviderIds = new Set(skippedProviders.map((item) => item.provider));
-  const slotKey = fixedSlotKey(now);
-  if (source === "scheduler" || source === "scheduler-pending") {
-    const dueProviderIds = new Set(selectedProviderIds.filter((providerId) => {
-      const providerState = state.system.providers[providerId];
-      if (!forceDue && !isProviderDue(providerState, now)) return false;
-      if (!forceDue && providerState.lastProcessedSlotAt === slotKey) return false;
-      if (skippedProviderIds.has(providerId)) return false;
-      if (inFlightProviders.has(providerId)) {
-        markProviderPending(state, providerId, slotKey, now);
-        return false;
-      }
-      return true;
-    }));
-    targetVenueIds = activeVenueIds.filter((venueId) => {
-      const providerId = VENUES[venueId]?.provider;
-      return dueProviderIds.has(providerId);
-    });
-    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
-    selectedProviderIds = Array.from(dueProviderIds);
-    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
-      syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
-      if (skippedProviders.length > 0) {
-        addSkipLogs(state, skippedProviders, now);
-        addLog(state, buildCycleSummary({
-          checked: {},
-          activeVenueIds,
-          skippedProviders,
-          vacancyCount: 0,
-          alertCount: 0
-        }), now);
-        finishRunState(state, now, activeVenueIds, {}, skippedProviders);
-      }
-      await stateSaver(state);
-      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
-    }
+function mergeProviderFailure(state, {
+  providerIds,
+  targetVenueIds,
+  checked,
+  checkedAt,
+  now,
+  activeVenueIds,
+  activeProviderIds,
+  skippedProviders,
+  error
+}) {
+  for (const providerId of providerIds) finishProviderRuntime(state, providerId, checkedAt, error);
+  updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
+  syncProviderSchedule(state, activeProviderIds, now);
+  addLog(state, buildCycleSummary({
+    checked,
+    activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders),
+    skippedProviders,
+    vacancyCount: 0,
+    alertCount: 0
+  }), now);
+  finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
+}
 
-    for (const providerId of selectedProviderIds) {
-      inFlightProviders.add(providerId);
-      const runtime = providerRuntime(providerId);
-      runtime.inFlight = true;
-      runtime.startedAt = new Date();
-      state.system.providers[providerId] = {
-        ...(state.system.providers[providerId] || {}),
-        status: "running",
-        pending: false,
-        lastStartedAt: runtime.startedAt.toISOString(),
-        lastError: null,
-        lastProcessedSlotAt: slotKey
-      };
-      addLog(state, `${providerLabel(providerId)} ${source === "scheduler-pending" ? "지연" : "정규"} 조회 START`, now);
-    }
-  } else if (skippedProviderIds.size > 0) {
-    targetVenueIds = activeVenueIds.filter((venueId) => !skippedProviderIds.has(VENUES[venueId]?.provider));
-    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
-    selectedProviderIds = selectedProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
-    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
-      addSkipLogs(state, skippedProviders, now);
-      addLog(state, buildCycleSummary({
-        checked: {},
-        activeVenueIds,
-        skippedProviders,
-        vacancyCount: 0,
-        alertCount: 0
-      }), now);
-      finishRunState(state, now, activeVenueIds, {}, skippedProviders);
-      await stateSaver(state);
-      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true };
-    }
-  }
-
-  let checked;
-  const errors = [];
-  try {
-    const checkedAt = new Date().toISOString();
-    await stateSaver(state);
-    checked = await checker({ watches: targetWatches, source });
-  } catch (error) {
-    const checkedAt = new Date().toISOString();
-    const pendingProviderIds = [];
-    for (const providerId of selectedProviderIds) {
-      finishProviderRuntime(state, providerId, checkedAt, error);
-      if (providerRuntime(providerId).pending) pendingProviderIds.push(providerId);
-    }
-    checked = {};
-    Object.defineProperty(checked, CHECK_META, {
-      value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
-      enumerable: false,
-      configurable: true
-    });
-    updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
-    syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
-    addLog(state, buildCycleSummary({ checked, activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders), skippedProviders, vacancyCount: 0, alertCount: 0 }), now);
-    finishRunState(state, now, targetVenueIds, checked, skippedProviders);
-    await stateSaver(state);
-    runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
-    return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
-  }
-
-  const reservations = Object.values(checked).flat();
-  const pendingProviderIds = [];
-  for (const providerId of selectedProviderIds) {
-    finishProviderRuntime(state, providerId, new Date().toISOString());
-    if (providerRuntime(providerId).pending) pendingProviderIds.push(providerId);
-  }
-
-  const notifications = findNotifications(state, reservations);
+function mergeProviderSuccess(state, {
+  providerIds,
+  checked,
+  reservations,
+  checkedAt,
+  now,
+  targetVenueIds,
+  activeVenueIds,
+  activeProviderIds,
+  skippedProviders,
+  alertCount
+}) {
+  for (const providerId of providerIds) finishProviderRuntime(state, providerId, checkedAt);
   const vacancyCount = countMatchingAvailableItems(state, reservations);
 
-  const checkedAt = new Date().toISOString();
   for (const venueId of Object.keys(checked)) {
+    if (venueId === CHECK_META) continue;
     const count = checked[venueId]?.length ?? 0;
-    state.system.venues[venueId] = {
-      ok: count > 0,
-      checkedAt,
-      count
-    };
+    state.system.venues[venueId] = { ok: count > 0, checkedAt, count };
   }
-
-  let alertCount = 0;
-  for (const notification of notifications) {
-    try {
-      const user = usersById.get(notification.watch.userId);
-      if (!user?.telegramChatId || user.enabled === false) continue;
-      await notifier(buildNotificationMessage(notification.item), user.telegramChatId);
-      state.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
-      alertCount += 1;
-    } catch (error) {
-      errors.push(error.message);
-      console.error(`Telegram 알림 발송 실패: ${error.message}`);
-    }
-  }
-  addLog(state, buildCycleSummary({ checked, activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders), skippedProviders, vacancyCount, alertCount }), now);
 
   for (const item of reservations) {
     state.lastAvailability[keyFor(item)] = {
@@ -503,26 +404,266 @@ export async function runCheckCycle({
       checkedAt
     };
   }
-  for (const notification of notifications) {
-    state.lastAvailability[notification.key] = {
-      provider: notification.item.provider,
-      venue: notification.item.venue,
-      courtType: notification.item.courtType,
-      courtNo: notification.item.courtNo,
-      date: notification.item.date,
-      time: notification.item.time,
-      startTime: notification.item.startTime,
-      endTime: notification.item.endTime,
-      available: true,
-      checkedAt
-    };
-  }
   updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
-  syncProviderSchedule(state, Array.from(activeProviders.keys()), now);
+  syncProviderSchedule(state, activeProviderIds, now);
+  addLog(state, buildCycleSummary({
+    checked,
+    activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders),
+    skippedProviders,
+    vacancyCount,
+    alertCount
+  }), now);
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
-  await stateSaver(state);
+}
+
+export async function runCheckCycle({
+  checker = checkAllVenues,
+  notifier = sendTelegram,
+  stateLoader = loadState,
+  stateSaver = saveState,
+  stateUpdater = null,
+  source = "scheduler",
+  now = new Date(),
+  targetProviderIds = null,
+  forceDue = false
+} = {}) {
+  const mutateState = createStateUpdater(stateLoader, stateSaver, stateUpdater);
+  const state = await stateLoader();
+  const runStartedAt = now.toISOString();
+  state.system.providers ||= {};
+  const { activeWatches, activeVenueIds, activeProviders } = activeContextFor(state);
+  const activeProviderIds = Array.from(activeProviders.keys());
+  const runIntervalMinutes = schedulerIntervalMinutes(activeProviders.keys());
+  syncProviderSchedule(state, activeProviderIds, now);
+
+  if (activeWatches.length === 0 || activeVenueIds.length === 0) {
+    const checkedAt = new Date().toISOString();
+    await mutateState((latest) => {
+      const latestContext = activeContextFor(latest);
+      syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
+      latest.system.lastRun = {
+        runStartedAt,
+        runFinishedAt: checkedAt,
+        nextRunAt: nextFixedSlotAt(now, runIntervalMinutes),
+        facilities: {}
+      };
+      if (source !== "scheduler") {
+        latest.system.lastCheckedAt = checkedAt;
+        addLog(latest, "No active alerts. Skipping all reservation checks.");
+      }
+    });
+    return { checkedAt, reservations: [], notifications: [], errors: [], skipped: true };
+  }
+
+  const requestedProviderIds = targetProviderIds
+    ? new Set(targetProviderIds.filter((providerId) => activeProviders.has(providerId)))
+    : null;
+  let targetVenueIds = requestedProviderIds
+    ? activeVenueIds.filter((venueId) => requestedProviderIds.has(VENUES[venueId]?.provider))
+    : activeVenueIds;
+  let targetWatches = activeWatches;
+  let selectedProviderIds = requestedProviderIds ? Array.from(requestedProviderIds) : Array.from(activeProviders.keys());
+  const skippedProviders = selectedProviderIds
+    .filter((providerId) => !isProviderWithinMonitoringHours(providerId, now))
+    .map((provider) => ({ provider, reason: "운영시간 외" }));
+  const skippedProviderIds = new Set(skippedProviders.map((item) => item.provider));
+  const slotKey = fixedSlotKey(now);
+  const blockedProviderIds = [];
+  if (source === "scheduler" || source === "scheduler-pending") {
+    const dueProviderIds = new Set(selectedProviderIds.filter((providerId) => {
+      const providerState = state.system.providers[providerId];
+      if (!forceDue && !isProviderDue(providerState, now)) return false;
+      if (!forceDue && providerState.lastProcessedSlotAt === slotKey) return false;
+      if (skippedProviderIds.has(providerId)) return false;
+      if (inFlightProviders.has(providerId)) {
+        markProviderPending(state, providerId, slotKey, now);
+        blockedProviderIds.push(providerId);
+        return false;
+      }
+      return true;
+    }));
+    targetVenueIds = activeVenueIds.filter((venueId) => {
+      const providerId = VENUES[venueId]?.provider;
+      return dueProviderIds.has(providerId);
+    });
+    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
+    selectedProviderIds = Array.from(dueProviderIds);
+    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
+      await mutateState((latest) => {
+        const latestContext = activeContextFor(latest);
+        syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
+        for (const providerId of blockedProviderIds) {
+          if (inFlightProviders.has(providerId)) {
+            markProviderPending(latest, providerId, slotKey, now);
+          }
+        }
+        if (skippedProviders.length > 0) {
+          addSkipLogs(latest, skippedProviders, now);
+          addLog(latest, buildCycleSummary({
+            checked: {},
+            activeVenueIds,
+            skippedProviders,
+            vacancyCount: 0,
+            alertCount: 0
+          }), now);
+          finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
+        }
+      });
+      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true, notDue: true };
+    }
+
+    for (const providerId of selectedProviderIds) {
+      inFlightProviders.add(providerId);
+      const runtime = providerRuntime(providerId);
+      runtime.inFlight = true;
+      runtime.startedAt = new Date();
+    }
+    try {
+      await mutateState((latest) => {
+        const latestContext = activeContextFor(latest);
+        mergeProviderStart(latest, selectedProviderIds, {
+          now,
+          source,
+          slotKey,
+          activeProviderIds: Array.from(latestContext.activeProviders.keys())
+        });
+        latest.system.lastRun = {
+          runStartedAt,
+          runFinishedAt: null,
+          nextRunAt: nextFixedSlotAt(now, runIntervalMinutes),
+          facilities: {}
+        };
+      });
+    } catch (error) {
+      releaseProviderRuntimeLocks(selectedProviderIds);
+      throw error;
+    }
+  } else if (skippedProviderIds.size > 0) {
+    targetVenueIds = activeVenueIds.filter((venueId) => !skippedProviderIds.has(VENUES[venueId]?.provider));
+    targetWatches = filterWatchesToVenueIds(activeWatches, targetVenueIds);
+    selectedProviderIds = selectedProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
+    if (targetVenueIds.length === 0 || targetWatches.length === 0) {
+      await mutateState((latest) => {
+        const latestContext = activeContextFor(latest);
+        syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
+        addSkipLogs(latest, skippedProviders, now);
+        addLog(latest, buildCycleSummary({
+          checked: {},
+          activeVenueIds,
+          skippedProviders,
+          vacancyCount: 0,
+          alertCount: 0
+        }), now);
+        finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
+      });
+      return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true };
+    }
+  }
+
+  let checked;
+  const errors = [];
+  try {
+    checked = await checker({ watches: targetWatches, source });
+  } catch (error) {
+    const checkedAt = new Date().toISOString();
+    checked = {};
+    Object.defineProperty(checked, CHECK_META, {
+      value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
+      enumerable: false,
+      configurable: true
+    });
+    const pendingProviderIds = selectedProviderIds.filter((providerId) => providerRuntime(providerId).pending);
+    try {
+      await mutateState((latest) => {
+        const latestContext = activeContextFor(latest);
+        mergeProviderFailure(latest, {
+          providerIds: selectedProviderIds,
+          targetVenueIds,
+          checked,
+          checkedAt,
+          now,
+          activeVenueIds,
+          activeProviderIds: Array.from(latestContext.activeProviders.keys()),
+          skippedProviders,
+          error
+        });
+      });
+    } catch (stateError) {
+      releaseProviderRuntimeLocks(selectedProviderIds);
+      throw stateError;
+    }
+    runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
+    return { checkedAt, reservations: [], notifications: [], errors: [error.message] };
+  }
+
+  const reservations = Object.values(checked).flat();
+  const checkedAt = new Date().toISOString();
+  const pendingProviderIds = selectedProviderIds.filter((providerId) => providerRuntime(providerId).pending);
+  let notificationPlan;
+  try {
+    notificationPlan = await mutateState((latest) => {
+      const notifications = findNotifications(latest, reservations);
+      return {
+        notifications,
+        usersById: Object.fromEntries((latest.users || []).map((user) => [user.id, user]))
+      };
+    });
+  } catch (error) {
+    releaseProviderRuntimeLocks(selectedProviderIds);
+    throw error;
+  }
+
+  let alertCount = 0;
+  for (const notification of notificationPlan.notifications) {
+    try {
+      const user = notificationPlan.usersById[notification.watch.userId];
+      if (!user?.telegramChatId || user.enabled === false) continue;
+      await notifier(buildNotificationMessage(notification.item), user.telegramChatId);
+      await mutateState((latest) => {
+        latest.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
+        latest.lastAvailability[notification.key] = {
+          provider: notification.item.provider,
+          venue: notification.item.venue,
+          courtType: notification.item.courtType,
+          courtNo: notification.item.courtNo,
+          date: notification.item.date,
+          time: notification.item.time,
+          startTime: notification.item.startTime,
+          endTime: notification.item.endTime,
+          available: true,
+          checkedAt
+        };
+      });
+      alertCount += 1;
+    } catch (error) {
+      errors.push(error.message);
+      console.error(`Telegram 알림 발송 실패: ${error.message}`);
+    }
+  }
+
+  try {
+    await mutateState((latest) => {
+      const latestContext = activeContextFor(latest);
+      mergeProviderSuccess(latest, {
+        providerIds: selectedProviderIds,
+        checked,
+        reservations,
+        checkedAt,
+        now,
+        targetVenueIds,
+        activeVenueIds,
+        activeProviderIds: Array.from(latestContext.activeProviders.keys()),
+        skippedProviders,
+        alertCount
+      });
+    });
+  } catch (error) {
+    releaseProviderRuntimeLocks(selectedProviderIds);
+    throw error;
+  }
+
   runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
-  return { checkedAt, reservations, notifications, errors };
+  return { checkedAt, reservations, notifications: notificationPlan.notifications, errors };
 }
 
 function providerRuntime(providerId) {
@@ -586,6 +727,15 @@ function runPendingProviderChecks(providerIds, options) {
       forceDue: true,
       now: new Date()
     }).catch((error) => console.error(`${providerLabel(providerId)} pending check failed: ${error.message}`));
+  }
+}
+
+function releaseProviderRuntimeLocks(providerIds) {
+  for (const providerId of providerIds) {
+    const runtime = providerRuntime(providerId);
+    inFlightProviders.delete(providerId);
+    runtime.inFlight = false;
+    runtime.startedAt = null;
   }
 }
 

@@ -5,7 +5,7 @@ import { parseReservationDom } from "./parser.js";
 import { normalizeDate } from "./normalization.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
-import { createProviderTimer } from "./providerTiming.js";
+import { createProviderTimer, PROVIDER_HARD_TIMEOUT_MS, withTimeout } from "./providerTiming.js";
 import { fileURLToPath } from "node:url";
 
 const providerLocks = new Map();
@@ -240,7 +240,7 @@ export async function checkAllVenues(options = {}) {
   return withCheckMeta(result, meta);
 }
 
-export async function runProviderCheck(providerId, fn) {
+export async function runProviderCheck(providerId, fn, options = {}) {
   if (providerLocks.has(providerId)) {
     console.debug(`${providerId} check already running; duplicate check skipped.`);
     return withCheckMeta(providerId === "olympic" ? [] : {}, {
@@ -248,7 +248,12 @@ export async function runProviderCheck(providerId, fn) {
     });
   }
 
-  const running = Promise.resolve().then(fn);
+  const running = withTimeout(
+    Promise.resolve().then(fn),
+    options.timeoutMs ?? PROVIDER_HARD_TIMEOUT_MS,
+    PROVIDERS[providerId]?.name || providerId,
+    "provider 전체 조회"
+  );
   providerLocks.set(providerId, running);
   try {
     return await running;

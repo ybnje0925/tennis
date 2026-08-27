@@ -1,9 +1,11 @@
 export const PROVIDER_WARNING_MS = 60_000;
+export const PROVIDER_HARD_TIMEOUT_MS = 240_000;
 
 export class ProviderTimeoutError extends Error {
   constructor(providerLabel, stepLabel, timeoutMs) {
     super(`${providerLabel} ${stepLabel} timeout after ${(timeoutMs / 1000).toFixed(1)}초`);
     this.name = "ProviderTimeoutError";
+    this.code = "PROVIDER_TIMEOUT";
     this.providerLabel = providerLabel;
     this.stepLabel = stepLabel;
     this.timeoutMs = timeoutMs;
