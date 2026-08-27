@@ -22,6 +22,7 @@ import {
   getActiveWatches,
   groupActiveWatchesByVenue,
   runCheckCycle,
+  SCHEDULER_VERSION,
   startScheduler
 } from "./monitor.js";
 import { validateVenueSelection } from "./venueRules.js";
@@ -207,6 +208,7 @@ app.get("/api/status", requireUser, async (req, res, next) => {
     const activeByVenue = groupActiveWatchesByVenue(activeUserWatches);
     res.json({
       ...state.system,
+      schedulerVersion: SCHEDULER_VERSION,
       currentUserWatchCount: userWatches.length,
       currentUserActiveWatchCount: activeUserWatches.length,
       activeVenues: Object.fromEntries(

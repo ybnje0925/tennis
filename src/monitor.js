@@ -15,6 +15,7 @@ const inFlightProviders = new Set();
 const providerRuntimeState = new Map();
 let schedulerTask = null;
 const SERVICE_TIME_ZONE = "Asia/Seoul";
+export const SCHEDULER_VERSION = "provider-pending-v2";
 
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
@@ -241,7 +242,7 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
     const pollingMinutes = providerPollingMinutes(providerId);
     const lastCheckedAt = previous.lastCheckedAt || null;
     const withinMonitoringHours = isProviderWithinMonitoringHours(providerId, now);
-    const pending = Boolean(runtime.pending || previous.pending);
+    const pending = Boolean(runtime.pending);
     const status = !active.has(providerId)
       ? "idle"
       : !withinMonitoringHours
@@ -770,6 +771,7 @@ export function startScheduler() {
   }, { timezone: SERVICE_TIME_ZONE });
   schedulerTask = task;
   console.log(`Scheduler started: provider polling due check every 1 minute.`);
+  console.log(`Scheduler version: ${SCHEDULER_VERSION}`);
   console.log(`Polling | 강동 ${PROVIDERS.gangdong.pollingMinutes}분 | 송파 ${PROVIDERS.songpa.pollingMinutes}분 | 올림픽 ${PROVIDERS.olympic.pollingMinutes}분`);
   return task;
 }

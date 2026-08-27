@@ -57,6 +57,22 @@ describe("closed beta storage", () => {
     expect(reused).toBeNull();
   });
 
+  it("drops legacy global scheduler overlap logs while loading state", async () => {
+    const { loadState, saveState } = await loadStorage();
+    const state = await loadState();
+    state.system.logs = [
+      "[22:00] 조회 SKIP - 이전 조회 진행 중",
+      "[22:01] 강동 조회 지연 - 이전 조회 진행 중, 종료 후 즉시 재조회 예정"
+    ];
+    await saveState(state);
+
+    const loaded = await loadState();
+
+    expect(loaded.system.logs).toEqual([
+      "[22:01] 강동 조회 지연 - 이전 조회 진행 중, 종료 후 즉시 재조회 예정"
+    ]);
+  });
+
   it("enforces watch ownership on update and delete", async () => {
     const { addWatch, deleteWatch, updateWatch } = await loadStorage();
     const watch = await addWatch({

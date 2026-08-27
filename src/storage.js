@@ -357,6 +357,8 @@ function normalizeState(raw) {
   state.system.lastRunAt ||= state.system.lastCheckedAt || null;
   state.system.nextRunAt ||= state.system.nextCheckAt || null;
   state.system.lastRun ||= null;
-  state.system.logs = Array.isArray(state.system.logs) ? state.system.logs.slice(-30) : [];
+  state.system.logs = Array.isArray(state.system.logs)
+    ? state.system.logs.filter((line) => !/조회 SKIP - 이전 조회 진행 중/.test(line)).slice(-30)
+    : [];
   return state;
 }

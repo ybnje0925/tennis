@@ -781,6 +781,33 @@ describe("syncProviderSchedule", () => {
     expect(current.system.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
   });
 
+  it("does not revive a persisted pending flag after process restart", () => {
+    const current = state({
+      system: {
+        lastCheckedAt: null,
+        nextCheckAt: null,
+        venues: {},
+        logs: [],
+        providers: {
+          gangdong: {
+            id: "gangdong",
+            active: true,
+            pollingMinutes: 5,
+            pending: true,
+            status: "pending",
+            lastCheckedAt: "2026-08-24T17:50:00.000Z",
+            nextCheckAt: "2026-08-24T17:55:00.000Z"
+          }
+        }
+      }
+    });
+
+    syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+
+    expect(current.system.providers.gangdong.pending).toBe(false);
+    expect(current.system.providers.gangdong.status).toBe("idle");
+  });
+
   it("tracks mixed provider polling independently and avoids a misleading aggregate next time", () => {
     const current = state();
 
