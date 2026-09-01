@@ -4,6 +4,7 @@ import path from "node:path";
 import { config, assertSongpaLoginConfig } from "../config.js";
 import { PROVIDERS, SONGPA_LOGIN_URL, TIME_SLOTS, VENUES } from "../constants.js";
 import { createProviderTimer, withTimeout } from "../providerTiming.js";
+import { CheckDiagnosticError, classifyError, diagnosticError, errorMessageForConsole } from "../diagnostics.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "songpa-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
@@ -75,25 +76,83 @@ export async function ensureSongpaLoggedIn(page, options = {}) {
   });
 }
 
-export async function checkSongpaVenues(venueIds) {
+export async function checkSongpaVenues(venueIds, options = {}) {
   const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "songpa");
   if (ids.length === 0) return {};
 
   const timer = createProviderTimer("송파");
   let errorForTimer = null;
-  const { context, page } = await timer.step("브라우저 세션", () => openSongpaSession());
+  let session = await timer.step("브라우저 세션", () => openSongpaSession()).catch((error) => {
+    throw diagnosticError({
+      type: classifyError(error, { stage: "BROWSER" }).type,
+      stage: "BROWSER",
+      provider: "songpa",
+      retryable: true,
+      message: error.message,
+      cause: error
+    });
+  });
   try {
-    const loggedIn = await ensureSongpaLoggedIn(page, { timer });
-    if (!loggedIn) throw new Error("송파구 로그인 완료 여부를 확인하지 못했습니다.");
+    const loggedIn = await ensureSongpaLoggedIn(session.page, { timer });
+    if (!loggedIn) {
+      throw diagnosticError({
+        type: "LOGIN_OR_PROTECTION_PAGE",
+        stage: "AUTH_OR_PROTECTION",
+        provider: "songpa",
+        retryable: false,
+        message: "송파구 로그인 완료 여부를 확인하지 못했습니다.",
+        details: await inspectSongpaPage(session.page)
+      });
+    }
 
     const result = {};
     const errors = [];
+    const retryVenueIds = [];
     for (const venueId of ids) {
       try {
-        result[venueId] = await checkSongpaVenue(page, venueId, { timer });
+        result[venueId] = await checkSongpaVenue(session.page, venueId, { timer, dates: options.venueDates?.[venueId] });
       } catch (error) {
-        errors.push({ provider: "songpa", venueId, message: error.message });
-        console.warn(`송파: ${VENUES[venueId]?.name || venueId} 조회 실패`);
+        const diagnostic = classifyError(error, {
+          provider: "songpa",
+          venueId,
+          targetDate: options.venueDates?.[venueId]?.join(", ") || null
+        });
+        errors.push(diagnostic);
+        if (diagnostic.retryable) retryVenueIds.push(venueId);
+        console.warn(`송파 조회 실패 | ${errorMessageForConsole(diagnostic)}`);
+        if (diagnostic.stack) console.warn(diagnostic.stack);
+      }
+    }
+    if (retryVenueIds.length > 0) {
+      await Promise.resolve(session.context.close()).catch((error) => console.warn(`송파 브라우저 세션 종료 실패: ${error.message}`));
+      await wait(options.retryDelayMs ?? 2500);
+      session = await timer.step("브라우저 세션 재시도", () => openSongpaSession());
+      const retryLoggedIn = await ensureSongpaLoggedIn(session.page, { timer });
+      if (!retryLoggedIn) {
+        const diagnostic = classifyError(new CheckDiagnosticError({
+          type: "LOGIN_OR_PROTECTION_PAGE",
+          stage: "AUTH_OR_PROTECTION",
+          provider: "songpa",
+          retryable: false,
+          message: "재시도 송파구 로그인 완료 여부를 확인하지 못했습니다."
+        }));
+        for (const venueId of retryVenueIds) replaceVenueError(errors, venueId, { ...diagnostic, venueId, venueName: VENUES[venueId]?.name });
+      } else {
+        for (const venueId of retryVenueIds) {
+          try {
+            result[venueId] = await checkSongpaVenue(session.page, venueId, { timer, dates: options.venueDates?.[venueId] });
+            removeVenueError(errors, venueId);
+          } catch (error) {
+            const diagnostic = classifyError(error, {
+              provider: "songpa",
+              venueId,
+              targetDate: options.venueDates?.[venueId]?.join(", ") || null
+            });
+            replaceVenueError(errors, venueId, diagnostic);
+            console.warn(`송파 재시도 실패 | ${errorMessageForConsole(diagnostic)}`);
+            if (diagnostic.stack) console.warn(diagnostic.stack);
+          }
+        }
       }
     }
     Object.defineProperty(result, CHECK_META, {
@@ -106,7 +165,7 @@ export async function checkSongpaVenues(venueIds) {
     errorForTimer = error;
     throw error;
   } finally {
-    await Promise.resolve(context.close()).catch((error) => console.warn(`송파 브라우저 세션 종료 실패: ${error.message}`));
+    await Promise.resolve(session?.context?.close()).catch((error) => console.warn(`송파 브라우저 세션 종료 실패: ${error.message}`));
     timer.end(errorForTimer);
   }
 }
@@ -116,19 +175,85 @@ export async function checkSongpaVenue(page, venueId, options = {}) {
   if (!venue || venue.provider !== "songpa") throw new Error(`Unknown Songpa venue: ${venueId}`);
   const timer = options.timer;
 
-  await maybeStep(timer, `${venue.name} 페이지 접근`, async () => {
-    await page.goto(venue.url, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+  const response = await maybeStep(timer, `${venue.name} 페이지 접근`, async () => {
+    const navResponse = await page.goto(venue.url, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+    return navResponse;
+  }).catch((error) => {
+    throw diagnosticError({
+      type: classifyError(error, { stage: "NAVIGATION" }).type,
+      stage: "NAVIGATION",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: classifyError(error).retryable,
+      message: error.message,
+      cause: error
+    });
   });
+  const status = response?.status?.();
+  if (Number.isFinite(status) && status >= 400) {
+    throw diagnosticError({
+      type: status >= 500 ? "HTTP_ERROR" : "HTTP_BLOCKED_OR_NOT_FOUND",
+      stage: "HTTP",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: status >= 500,
+      message: `${venue.name} HTTP ${status}`,
+      details: { status, url: response?.url?.() || page.url() }
+    });
+  }
 
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
   if (/로그인|아이디|비밀번호/.test(body) && !/로그아웃|마이페이지/.test(body)) {
-    throw new Error(`${venue.name} 예약현황이 로그인 페이지로 보입니다.`);
+    throw diagnosticError({
+      type: "LOGIN_OR_PROTECTION_PAGE",
+      stage: "AUTH_OR_PROTECTION",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: false,
+      message: `${venue.name} 예약현황이 로그인 페이지로 보입니다.`,
+      details: await inspectSongpaPage(page, body)
+    });
+  }
+  if (!body.trim()) {
+    throw diagnosticError({
+      type: "EMPTY_PAGE",
+      stage: "HTTP",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: true,
+      message: `${venue.name} 예약현황 페이지 본문이 비어 있습니다.`,
+      details: await inspectSongpaPage(page, body)
+    });
   }
 
-  const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseSongpaReservationDom(page, venueId));
+  const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseSongpaReservationDom(page, venueId)).catch((error) => {
+    throw diagnosticError({
+      type: "PARSE_FAILED",
+      stage: "PARSE",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: false,
+      message: error.message,
+      cause: error
+    });
+  });
   if (reservations.length === 0) {
-    throw new Error(`${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
+    throw diagnosticError({
+      type: "PARSE_FAILED",
+      stage: "PARSE",
+      provider: "songpa",
+      venueId,
+      targetDate: options.dates?.join(", ") || null,
+      retryable: false,
+      message: `${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`,
+      details: await inspectSongpaPage(page, body)
+    });
   }
   return reservations;
 }
@@ -161,7 +286,16 @@ export function parseSongpaCalendarSnapshot(snapshot, venueId) {
 
   const year = snapshot.year;
   const month = String(snapshot.month).padStart(2, "0");
-  if (!year || !month) return [];
+  if (!year || !snapshot.month) {
+    throw diagnosticError({
+      type: "PARSE_FAILED",
+      stage: "PARSE",
+      provider: "songpa",
+      venueId,
+      retryable: false,
+      message: `${venue.name} 달력 연월을 읽지 못했습니다.`
+    });
+  }
 
   const results = [];
   for (const cell of snapshot.cells || []) {
@@ -226,4 +360,32 @@ export const SONGPA_TIME_SLOTS = TIME_SLOTS;
 
 function maybeStep(timer, label, fn) {
   return timer ? timer.step(label, fn) : fn();
+}
+
+async function inspectSongpaPage(page, bodyText = null) {
+  const [title, body] = await Promise.all([
+    page.title?.().catch(() => "") || "",
+    bodyText == null ? page.locator("body").innerText({ timeout: 3000 }).catch(() => "") : bodyText
+  ]);
+  const url = typeof page.url === "function" ? page.url() : "";
+  return {
+    url,
+    title,
+    redirect: /\/bbs\/login\.php|login/i.test(url),
+    bodySample: String(body || "").replace(/\s+/g, " ").trim().slice(0, 300)
+  };
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function removeVenueError(errors, venueId) {
+  const index = errors.findIndex((error) => error.venueId === venueId);
+  if (index >= 0) errors.splice(index, 1);
+}
+
+function replaceVenueError(errors, venueId, diagnostic) {
+  removeVenueError(errors, venueId);
+  errors.push(diagnostic);
 }

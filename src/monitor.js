@@ -10,6 +10,7 @@ import {
   olympicKeyFor
 } from "./providers/olympicProvider.js";
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
+import { classifyError } from "./diagnostics.js";
 
 const inFlightProviders = new Set();
 const providerRuntimeState = new Map();
@@ -260,12 +261,15 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
       active: active.has(providerId),
       status,
       lastCheckedAt,
+      lastAttemptAt: previous.lastAttemptAt || null,
+      lastSuccessfulCheckAt: previous.lastSuccessfulCheckAt || lastCheckedAt || null,
       lastStartedAt: previous.lastStartedAt || null,
       lastFinishedAt: previous.lastFinishedAt || null,
       lastDurationMs: previous.lastDurationMs || null,
       lastProcessedSlotAt: previous.lastProcessedSlotAt || null,
       pending,
       lastError: previous.lastError || null,
+      lastErrorAt: previous.lastErrorAt || null,
       monitoringHours: PROVIDERS[providerId]?.monitoringHours || null,
       monitoringStatus: withinMonitoringHours ? "active" : "outside-hours",
       nextCheckAt: active.has(providerId)
@@ -356,7 +360,7 @@ function mergeProviderFailure(state, {
   error
 }) {
   for (const providerId of providerIds) finishProviderRuntime(state, providerId, checkedAt, error);
-  updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
+  updateAttemptedProviderSchedule(state, targetVenueIds, checkedAt);
   syncProviderSchedule(state, activeProviderIds, now);
   addLog(state, buildCycleSummary({
     checked,
@@ -378,9 +382,13 @@ function mergeProviderSuccess(state, {
   activeVenueIds,
   activeProviderIds,
   skippedProviders,
-  alertCount
+  alertCount,
+  checkErrors = []
 }) {
-  for (const providerId of providerIds) finishProviderRuntime(state, providerId, checkedAt);
+  for (const providerId of providerIds) {
+    const stats = providerCheckStats(providerId, targetVenueIds, checked, checkErrors);
+    finishProviderRuntime(state, providerId, checkedAt, stats.failed > 0 ? providerErrorMessage(checkErrors, providerId) : null, stats);
+  }
   const vacancyCount = countMatchingAvailableItems(state, reservations);
 
   for (const venueId of Object.keys(checked)) {
@@ -404,7 +412,8 @@ function mergeProviderSuccess(state, {
       checkedAt
     };
   }
-  updateCheckedProviderSchedule(state, targetVenueIds, checkedAt);
+  updateAttemptedProviderSchedule(state, targetVenueIds, checkedAt);
+  updateCheckedProviderSchedule(state, successfulVenueIds(targetVenueIds, checked), checkedAt);
   syncProviderSchedule(state, activeProviderIds, now);
   addLog(state, buildCycleSummary({
     checked,
@@ -568,7 +577,14 @@ export async function runCheckCycle({
     const checkedAt = new Date().toISOString();
     checked = {};
     Object.defineProperty(checked, CHECK_META, {
-      value: { errors: targetVenueIds.map((venueId) => ({ provider: VENUES[venueId]?.provider, venueId, message: error.message })) },
+      value: {
+        errors: targetVenueIds.map((venueId) => classifyError(error, {
+          provider: VENUES[venueId]?.provider,
+          venueId,
+          venueName: VENUES[venueId]?.name,
+          targetDate: targetWatches.find((watch) => (watch.venues || []).includes(venueId))?.date || null
+        }))
+      },
       enumerable: false,
       configurable: true
     });
@@ -599,10 +615,20 @@ export async function runCheckCycle({
   const reservations = Object.values(checked).flat();
   const checkedAt = new Date().toISOString();
   const pendingProviderIds = selectedProviderIds.filter((providerId) => providerRuntime(providerId).pending);
+  const checkErrors = checked?.[CHECK_META]?.errors || [];
+  const notificationVenueIds = new Set(successfulVenueIds(targetVenueIds, checked));
   let notificationPlan;
   try {
     notificationPlan = await mutateState((latest) => {
-      const notifications = findNotifications(latest, reservations);
+      const notifications = findNotifications({
+        ...latest,
+        watches: (latest.watches || [])
+          .map((watch) => ({
+            ...watch,
+            venues: (watch.venues || []).filter((venueId) => notificationVenueIds.has(venueId))
+          }))
+          .filter((watch) => watch.venues.length > 0)
+      }, reservations);
       return {
         notifications,
         usersById: Object.fromEntries((latest.users || []).map((user) => [user.id, user]))
@@ -654,7 +680,8 @@ export async function runCheckCycle({
         activeVenueIds,
         activeProviderIds: Array.from(latestContext.activeProviders.keys()),
         skippedProviders,
-        alertCount
+        alertCount,
+        checkErrors
       });
     });
   } catch (error) {
@@ -695,7 +722,7 @@ function markProviderPending(state, providerId, slotKey, now) {
   }
 }
 
-function finishProviderRuntime(state, providerId, checkedAt, error = null) {
+function finishProviderRuntime(state, providerId, checkedAt, error = null, stats = null) {
   const runtime = providerRuntime(providerId);
   const startedAt = runtime.startedAt;
   const finishedAt = new Date(checkedAt);
@@ -708,9 +735,12 @@ function finishProviderRuntime(state, providerId, checkedAt, error = null) {
     id: providerId,
     status: runtime.pending ? "pending" : error ? "error" : "idle",
     pending: runtime.pending,
+    lastAttemptAt: checkedAt,
     lastFinishedAt: checkedAt,
     lastDurationMs: durationMs,
-    lastError: error ? error.message : null
+    lastError: error ? (typeof error === "string" ? error : error.message) : null,
+    lastErrorAt: error ? checkedAt : state.system.providers[providerId]?.lastErrorAt || null,
+    lastSuccessfulCheckAt: !error || stats?.success > 0 ? checkedAt : state.system.providers[providerId]?.lastSuccessfulCheckAt || null
   };
 }
 
@@ -764,7 +794,7 @@ function finishRunState(state, now, activeVenueIds, checked = {}, skippedProvide
       ? { provider: providerId, status: "skipped", reason: skippedReason }
       : {
           provider: providerId,
-          status: Object.prototype.hasOwnProperty.call(checked, venueId) || Object.prototype.hasOwnProperty.call(checked, providerId) ? "checked" : "not-due",
+          status: Object.prototype.hasOwnProperty.call(checked, venueId) || Object.prototype.hasOwnProperty.call(checked, providerId) ? "checked" : checkErrorsForVenue(checked, venueId).length > 0 ? "failed" : "not-due",
           count: checked[venueId]?.length ?? checked[providerId]?.length ?? 0
         };
   }
@@ -776,7 +806,7 @@ function finishRunState(state, now, activeVenueIds, checked = {}, skippedProvide
   };
   state.system.lastRunAt = checkedAt;
   state.system.nextRunAt = state.system.lastRun.nextRunAt;
-  state.system.lastCheckedAt = checkedAt;
+  if (successfulVenueIds(activeVenueIds, checked).length > 0) state.system.lastCheckedAt = checkedAt;
   state.system.nextCheckAt = state.system.nextRunAt;
 }
 
@@ -787,15 +817,32 @@ function updateCheckedProviderSchedule(state, venueIds, checkedAt) {
       ...(state.system.providers[providerId] || {}),
       id: providerId,
       pollingMinutes: providerPollingMinutes(providerId),
-      lastCheckedAt: checkedAt
+      lastCheckedAt: checkedAt,
+      lastSuccessfulCheckAt: checkedAt
+    };
+  }
+}
+
+function updateAttemptedProviderSchedule(state, venueIds, checkedAt) {
+  state.system.providers ||= {};
+  for (const providerId of activeProviderVenueIds(venueIds).keys()) {
+    state.system.providers[providerId] = {
+      ...(state.system.providers[providerId] || {}),
+      id: providerId,
+      pollingMinutes: providerPollingMinutes(providerId),
+      lastAttemptAt: checkedAt
     };
   }
 }
 
 export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount }) {
-  const parts = ["조회완료"];
   const activeProviders = providerTargets(activeVenueIds);
   const checkErrors = checked?.[CHECK_META]?.errors || [];
+  const allFailed = Array.from(activeProviders.entries()).every(([providerId, venueIds]) => {
+    const stats = providerCheckStats(providerId, venueIds, checked, checkErrors);
+    return stats.total > 0 && stats.success === 0 && stats.failed > 0;
+  });
+  const parts = [allFailed ? "조회실패" : "조회완료"];
   const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
 
   for (const providerId of ["gangdong", "songpa", "olympic"]) {
@@ -807,11 +854,16 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
     parts.push(providerSummary(providerId, activeProviders.get(providerId), checked, checkErrors));
   }
 
-  const vacancyLabel = checkErrors.length > 0 ? "확인된 빈자리" : "빈자리";
-  const tail = [`${vacancyLabel} ${vacancyCount}건`];
-  if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
-  parts.push(tail.join(" → "));
-  return parts.join(" | ");
+  if (!allFailed) {
+    const tail = [`빈자리 ${vacancyCount}건`];
+    if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
+    parts.push(tail.join(" → "));
+  }
+  const detailLines = checkErrors
+    .filter((error) => activeProviders.has(error.provider))
+    .map((error) => `↳ ${error.venueName || VENUES[error.venueId]?.name || providerLabel(error.provider)}: ${error.type || shortReason(error.message)}${error.targetDate ? ` / ${error.targetDate}` : ""}`);
+  const summary = parts.join(" | ");
+  return detailLines.length > 0 ? [summary, ...detailLines].join("\n") : summary;
 }
 
 function providerLabel(providerId) {
@@ -836,9 +888,9 @@ function providerSummary(providerId, venueIds, checked, errors) {
   const providerErrors = errors.filter((error) => error.provider === providerId);
   if (providerId === "olympic") {
     if (providerErrors.length > 0 || !Object.prototype.hasOwnProperty.call(checked, "olympic")) {
-      return `올림픽✕(${shortReason(providerErrors[0]?.message)})`;
+      return "올림픽 0/1 성공 · 1 실패";
     }
-    return "올림픽✓";
+    return "올림픽 1/1 성공";
   }
 
   const label = providerId === "gangdong" ? "강동" : "송파";
@@ -846,8 +898,10 @@ function providerSummary(providerId, venueIds, checked, errors) {
   const successCount = venueIds.filter((venueId) => (
     Object.prototype.hasOwnProperty.call(checked, venueId) && !failedVenueIds.has(venueId)
   )).length;
-  const mark = successCount === venueIds.length ? "✓" : successCount > 0 ? "△" : `✕(${shortReason(providerErrors[0]?.message)})`;
-  return `${label} ${successCount}/${venueIds.length}${mark}`;
+  const failedCount = Math.max(0, venueIds.length - successCount);
+  return failedCount > 0
+    ? `${label} ${successCount}/${venueIds.length} 성공 · ${failedCount} 실패`
+    : `${label} ${successCount}/${venueIds.length} 성공`;
 }
 
 function shortReason(message = "조회 실패") {
@@ -856,6 +910,33 @@ function shortReason(message = "조회 실패") {
   if (/login|로그인/i.test(message)) return "로그인 실패";
   if (/중복|duplicate/i.test(message)) return "중복접속";
   return "조회 실패";
+}
+
+function successfulVenueIds(targetVenueIds, checked) {
+  return targetVenueIds.filter((venueId) => Object.prototype.hasOwnProperty.call(checked, venueId));
+}
+
+function checkErrorsForVenue(checked, venueId) {
+  return (checked?.[CHECK_META]?.errors || []).filter((error) => error.venueId === venueId);
+}
+
+function providerCheckStats(providerId, venueIds, checked, errors) {
+  const providerErrors = errors.filter((error) => error.provider === providerId);
+  if (providerId === "olympic") {
+    const success = Object.prototype.hasOwnProperty.call(checked, "olympic") && providerErrors.length === 0 ? 1 : 0;
+    return { total: 1, success, failed: success ? 0 : providerErrors.length > 0 ? 1 : 0 };
+  }
+  const failedVenueIds = new Set(providerErrors.map((error) => error.venueId).filter(Boolean));
+  const success = venueIds.filter((venueId) => Object.prototype.hasOwnProperty.call(checked, venueId) && !failedVenueIds.has(venueId)).length;
+  return { total: venueIds.length, success, failed: Math.max(0, venueIds.length - success) };
+}
+
+function providerErrorMessage(errors, providerId) {
+  const providerErrors = errors.filter((error) => error.provider === providerId);
+  if (providerErrors.length === 0) return null;
+  return providerErrors
+    .map((error) => `${error.venueName || VENUES[error.venueId]?.name || providerLabel(providerId)}: ${error.type || shortReason(error.message)} ${error.message || ""}`.trim())
+    .join("; ");
 }
 
 export function countMatchingAvailableItems(state, reservations) {

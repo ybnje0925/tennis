@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const openGangdongSession = vi.fn();
+const looksLikeProtectionOrLogin = vi.fn(async () => false);
 const parseReservationDom = vi.fn(async () => [
   {
     venue: "gangil",
@@ -79,17 +80,19 @@ function daysInMonth(month) {
 vi.mock("../src/browserSession.js", () => ({
   openGangdongSession,
   ensureLoggedIn: vi.fn(async () => true),
-  looksLikeProtectionOrLogin: vi.fn(async () => false)
+  looksLikeProtectionOrLogin
 }));
 
 vi.mock("../src/parser.js", () => ({
   parseReservationDom
 }));
 
-const { checkAllVenues, checkVenue, groupDatesByMonth, runProviderCheck } = await import("../src/checker.js");
+const { checkAllVenues, checkGangdongVenues, checkVenue, groupDatesByMonth, runProviderCheck } = await import("../src/checker.js");
 
 beforeEach(() => {
   openGangdongSession.mockReset();
+  looksLikeProtectionOrLogin.mockReset();
+  looksLikeProtectionOrLogin.mockResolvedValue(false);
   parseReservationDom.mockReset();
   parseReservationDom.mockImplementation(async () => [
     {
@@ -169,6 +172,27 @@ describe("checkAllVenues targeting", () => {
     expect(result[Symbol.for("tennis.checkMeta")].errors[0].message).toContain("CALENDAR_DATE_NOT_FOUND");
   });
 
+  it("classifies login or protection pages without retrying them", async () => {
+    const context = { close: vi.fn() };
+    const page = makeCalendarPage();
+    openGangdongSession.mockResolvedValueOnce({ context, page });
+    looksLikeProtectionOrLogin.mockResolvedValueOnce(true);
+
+    const result = await checkGangdongVenues(["gangil"], {
+      venueDates: { gangil: ["2026-08-29"] },
+      retryDelayMs: 0
+    });
+
+    expect(result.gangil).toBeUndefined();
+    expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({
+      provider: "gangdong",
+      venueId: "gangil",
+      type: "LOGIN_OR_PROTECTION_PAGE",
+      retryable: false
+    });
+    expect(openGangdongSession).toHaveBeenCalledTimes(1);
+  });
+
   it("deduplicates live venue checks across users", async () => {
     const context = { close: vi.fn() };
     const page = makeCalendarPage();
@@ -205,6 +229,54 @@ describe("checkAllVenues targeting", () => {
     });
 
     await expect(runProviderCheck("gangdong", async () => ({ gangil: [] }), { timeoutMs: 100 })).resolves.toEqual({ gangil: [] });
+  });
+
+  it("retries a retryable venue failure once and keeps the successful retry", async () => {
+    const firstContext = { close: vi.fn() };
+    const secondContext = { close: vi.fn() };
+    const firstPage = makeCalendarPage("2026-08");
+    const secondPage = makeCalendarPage("2026-08");
+    firstPage.goto.mockRejectedValueOnce(new Error("page.goto timeout after 30000ms"));
+    openGangdongSession
+      .mockResolvedValueOnce({ context: firstContext, page: firstPage })
+      .mockResolvedValueOnce({ context: secondContext, page: secondPage });
+    parseReservationDom.mockResolvedValueOnce([
+      { venue: "gangil", venueName: "강일테니스장", date: "2026-08-29", time: "18:00~20:00", available: false, availableCount: 0 }
+    ]);
+
+    const result = await checkGangdongVenues(["gangil"], {
+      venueDates: { gangil: ["2026-08-29"] },
+      retryDelayMs: 0
+    });
+
+    expect(result.gangil).toHaveLength(1);
+    expect(result[Symbol.for("tennis.checkMeta")].errors).toEqual([]);
+    expect(openGangdongSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the diagnostic error when retry also fails", async () => {
+    const firstContext = { close: vi.fn() };
+    const secondContext = { close: vi.fn() };
+    const firstPage = makeCalendarPage("2026-08");
+    const secondPage = makeCalendarPage("2026-08");
+    firstPage.goto.mockRejectedValueOnce(new Error("page.goto timeout after 30000ms"));
+    secondPage.goto.mockRejectedValueOnce(new Error("page.goto timeout after 30000ms"));
+    openGangdongSession
+      .mockResolvedValueOnce({ context: firstContext, page: firstPage })
+      .mockResolvedValueOnce({ context: secondContext, page: secondPage });
+
+    const result = await checkGangdongVenues(["gangil"], {
+      venueDates: { gangil: ["2026-08-29"] },
+      retryDelayMs: 0
+    });
+
+    expect(result.gangil).toBeUndefined();
+    expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({
+      provider: "gangdong",
+      venueId: "gangil",
+      type: "TIMEOUT"
+    });
+    expect(openGangdongSession).toHaveBeenCalledTimes(2);
   });
 });
 

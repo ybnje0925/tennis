@@ -384,7 +384,7 @@ describe("runCheckCycle active watch targeting", () => {
 
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
-    expect(summaryLog(current)).toContain("조회완료 | 강동 1/1✓ | 빈자리 0건");
+    expect(summaryLog(current)).toContain("조회완료 | 강동 1/1 성공 | 빈자리 0건");
     expect(summaryLog(current)).not.toContain("결과 없음");
   });
 
@@ -398,6 +398,50 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), notifier });
 
     expect(summaryLog(current)).toContain("빈자리 1건 → 알림 1건");
+  });
+
+  it("keeps lastAvailability and Telegram untouched when a provider check fails", async () => {
+    const item = slot();
+    const key = keyFor(item);
+    const current = state({
+      lastAvailability: {
+        [key]: { ...item, available: true, checkedAt: "2026-08-24T09:55:00.000Z" }
+      }
+    });
+    const checker = vi.fn(async () => {
+      const checked = {};
+      Object.defineProperty(checked, CHECK_META, {
+        value: { errors: [{ provider: "gangdong", venueId: "gangil", venueName: "강일테니스장", targetDate: "2026-08-29", type: "TIMEOUT", message: "timeout" }] },
+        enumerable: false
+      });
+      return checked;
+    });
+    const notifier = vi.fn();
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier });
+
+    expect(current.lastAvailability[key]).toMatchObject({ available: true, checkedAt: "2026-08-24T09:55:00.000Z" });
+    expect(notifier).not.toHaveBeenCalled();
+    expect(current.system.providers.gangdong.lastAttemptAt).toBeTruthy();
+    expect(current.system.providers.gangdong.lastErrorAt).toBeTruthy();
+    expect(current.system.providers.gangdong.lastCheckedAt).toBeFalsy();
+    expect(current.system.providers.gangdong.lastSuccessfulCheckAt).toBeFalsy();
+    expect(current.system.logs.at(-1)).toContain("조회실패 | 강동 0/1 성공 · 1 실패");
+    expect(current.system.logs.at(-1)).not.toContain("빈자리 0건");
+  });
+
+  it("distinguishes a successful zero-vacancy check from a failed check", async () => {
+    const current = state();
+    const checker = vi.fn(async () => ({
+      gangil: [slot({ available: false, availableCount: 0 })]
+    }));
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier: vi.fn() });
+
+    expect(current.system.logs.at(-1)).toContain("조회완료 | 강동 1/1 성공 | 빈자리 0건");
+    expect(current.system.providers.gangdong.lastCheckedAt).toBeTruthy();
+    expect(current.system.providers.gangdong.lastSuccessfulCheckAt).toBeTruthy();
+    expect(current.system.providers.gangdong.lastError).toBeNull();
   });
 
   it("routes notifications to the matching user's Telegram chat only", async () => {
@@ -663,8 +707,8 @@ describe("runCheckCycle active watch targeting", () => {
 
     expect(harness.current.system.providers.gangdong.lastCheckedAt).toBeTruthy();
     expect(harness.current.system.providers.songpa.lastCheckedAt).toBeTruthy();
-    expect(harness.current.system.logs.some((line) => line.includes("강동 1/1✓"))).toBe(true);
-    expect(harness.current.system.logs.some((line) => line.includes("송파 1/1✓"))).toBe(true);
+    expect(harness.current.system.logs.some((line) => line.includes("강동 1/1 성공"))).toBe(true);
+    expect(harness.current.system.logs.some((line) => line.includes("송파 1/1 성공"))).toBe(true);
   });
 
   it("keeps concurrent provider logs instead of overwriting them", async () => {
@@ -685,8 +729,8 @@ describe("runCheckCycle active watch targeting", () => {
     ]);
 
     const summaries = harness.current.system.logs.filter((line) => line.includes("조회완료"));
-    expect(summaries.some((line) => line.includes("강동 1/1✓"))).toBe(true);
-    expect(summaries.some((line) => line.includes("송파 1/1✓"))).toBe(true);
+    expect(summaries.some((line) => line.includes("강동 1/1 성공"))).toBe(true);
+    expect(summaries.some((line) => line.includes("송파 1/1 성공"))).toBe(true);
   });
 
   it("does not move Gangdong lastCheckedAt backward when Songpa finishes from an older planning snapshot", async () => {
@@ -747,8 +791,8 @@ describe("runCheckCycle active watch targeting", () => {
     await withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, async () => {
       await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-24T17:55:00.000Z") });
 
-      expect(summaryLog(current)).toContain("강동 1/1✓");
-      expect(summaryLog(current)).toContain("송파 1/1✓");
+      expect(summaryLog(current)).toContain("강동 1/1 성공");
+      expect(summaryLog(current)).toContain("송파 1/1 성공");
       expect(summaryLog(current)).not.toContain("올림픽✓");
     });
   });
@@ -772,8 +816,8 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-25T23:30:00.000Z") });
 
     expect(checker).toHaveBeenCalledTimes(1);
-    expect(summaryLog(current)).toContain("강동 1/1✓");
-    expect(summaryLog(current)).toContain("송파 1/1✓");
+    expect(summaryLog(current)).toContain("강동 1/1 성공");
+    expect(summaryLog(current)).toContain("송파 1/1 성공");
     expect(summaryLog(current)).toContain("올림픽 SKIP(운영시간 외)");
   });
 
@@ -787,7 +831,7 @@ describe("runCheckCycle active watch targeting", () => {
     await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:00:00.000Z") });
 
     expect(checker).toHaveBeenCalledTimes(1);
-    expect(summaryLog(current)).toContain("올림픽✓");
+    expect(summaryLog(current)).toContain("올림픽 1/1 성공");
   });
 
   it("stores scheduler run times from the same cycle clock used by logs", async () => {
@@ -840,6 +884,14 @@ describe("isProviderDue", () => {
         expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:10:00.000Z"))).toBe(true);
         expect(isProviderDue({ id: providerId }, new Date("2026-08-24T17:11:00.000Z"))).toBe(false);
       }
+    });
+  });
+
+  it("handles the 23:59 to 00:00 KST date boundary", () => {
+    withProviderPolling({ gangdong: 5 }, () => {
+      expect(isProviderDue({ id: "gangdong" }, new Date("2026-09-01T14:59:00.000Z"))).toBe(false);
+      expect(isProviderDue({ id: "gangdong" }, new Date("2026-09-01T15:00:00.000Z"))).toBe(true);
+      expect(nextFixedSlotAt(new Date("2026-09-01T14:59:00.000Z"), 5)).toBe("2026-09-01T15:00:00.000Z");
     });
   });
 });
@@ -1027,7 +1079,7 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["gangil", "myeongil", "songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum", "olympic"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 강동 2/2✓ | 송파 4/4✓ | 올림픽✓ | 빈자리 0건");
+    })).toBe("조회완료 | 강동 2/2 성공 | 송파 4/4 성공 | 올림픽 1/1 성공 | 빈자리 0건");
   });
 
   it("formats partial Songpa success", () => {
@@ -1046,7 +1098,7 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 송파 3/4△ | 확인된 빈자리 0건");
+    })).toBe("조회완료 | 송파 3/4 성공 · 1 실패 | 빈자리 0건\n↳ 오금공원테니스장: 조회 실패");
   });
 
   it("formats Olympic failure with a short reason", () => {
@@ -1061,7 +1113,7 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["olympic"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 올림픽✕(날짜조회 실패) | 확인된 빈자리 0건");
+    })).toBe("조회실패 | 올림픽 0/1 성공 · 1 실패\n↳ 올림픽: 날짜조회 실패");
   });
 
   it("keeps the normal vacancy label when every active provider succeeds with no slots", () => {
@@ -1073,6 +1125,31 @@ describe("buildCycleSummary", () => {
       activeVenueIds: ["gangil", "myeongil"],
       vacancyCount: 0,
       alertCount: 0
-    })).toBe("조회완료 | 강동 2/2✓ | 빈자리 0건");
+    })).toBe("조회완료 | 강동 2/2 성공 | 빈자리 0건");
+  });
+
+  it("formats a full provider failure without claiming zero vacancies", () => {
+    const checked = {};
+    Object.defineProperty(checked, CHECK_META, {
+      value: {
+        errors: [
+          { provider: "gangdong", venueId: "gangil", venueName: "강일테니스장", targetDate: "2026-09-05", type: "CALENDAR_DATE_NOT_FOUND", message: "missing" },
+          { provider: "gangdong", venueId: "myeongil", venueName: "명일테니스장", targetDate: "2026-09-05", type: "LOGIN_OR_PROTECTION_PAGE", message: "login" }
+        ]
+      },
+      enumerable: false
+    });
+
+    const summary = buildCycleSummary({
+      checked,
+      activeVenueIds: ["gangil", "myeongil"],
+      vacancyCount: 0,
+      alertCount: 0
+    });
+
+    expect(summary).toContain("조회실패 | 강동 0/2 성공 · 2 실패");
+    expect(summary).not.toContain("빈자리 0건");
+    expect(summary).toContain("↳ 강일테니스장: CALENDAR_DATE_NOT_FOUND / 2026-09-05");
+    expect(summary).toContain("↳ 명일테니스장: LOGIN_OR_PROTECTION_PAGE / 2026-09-05");
   });
 });

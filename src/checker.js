@@ -6,6 +6,7 @@ import { normalizeDate } from "./normalization.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
 import { createProviderTimer, PROVIDER_HARD_TIMEOUT_MS, withTimeout } from "./providerTiming.js";
+import { CheckDiagnosticError, classifyError, diagnosticError, errorMessageForConsole } from "./diagnostics.js";
 import { fileURLToPath } from "node:url";
 
 const providerLocks = new Map();
@@ -19,10 +20,30 @@ export async function checkVenue(page, venueId, options = {}) {
   await maybeStep(timer, `${venue.name} 페이지 접근`, async () => {
     await page.goto(venue.url, { waitUntil: "domcontentloaded", timeout: 30_000 });
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+  }).catch((error) => {
+    throw diagnosticError({
+      type: classifyError(error, { stage: "NAVIGATION" }).type,
+      stage: "NAVIGATION",
+      provider: "gangdong",
+      venueId,
+      targetDate: options.dates?.[0] || null,
+      retryable: classifyError(error).retryable,
+      message: error.message,
+      cause: error
+    });
   });
 
   if (await looksLikeProtectionOrLogin(page)) {
-    throw new Error(`${venue.name} 예약현황이 실제 달력이 아니라 로그인/보호 페이지로 보입니다.`);
+    throw diagnosticError({
+      type: "LOGIN_OR_PROTECTION_PAGE",
+      stage: "AUTH_OR_PROTECTION",
+      provider: "gangdong",
+      venueId,
+      targetDate: options.dates?.[0] || null,
+      retryable: false,
+      message: `${venue.name} 예약현황이 실제 달력이 아니라 로그인/보호 페이지로 보입니다.`,
+      details: await inspectPageBasics(page)
+    });
   }
 
   if (!options.dates || options.dates.length === 0) {
@@ -36,14 +57,51 @@ export async function checkVenue(page, venueId, options = {}) {
   const datesByMonth = groupDatesByMonth(options.dates);
   const results = [];
   for (const [targetMonth, dates] of datesByMonth) {
-    await maybeStep(timer, `${venue.name} 날짜 선택 ${targetMonth}`, () => moveGangdongCalendarToMonth(page, targetMonth));
+    await maybeStep(timer, `${venue.name} 날짜 선택 ${targetMonth}`, () => moveGangdongCalendarToMonth(page, targetMonth)).catch((error) => {
+      throw diagnosticError({
+        type: classifyError(error, { stage: "CALENDAR" }).type,
+        stage: "CALENDAR_NAVIGATION",
+        provider: "gangdong",
+        venueId,
+        targetDate: dates[0] || null,
+        retryable: classifyError(error).retryable,
+        message: error.message,
+        details: { targetMonth },
+        cause: error
+      });
+    });
     const calendar = await inspectGangdongCalendar(page);
     const missingCells = dates.filter((date) => !calendar.dates.some((item) => item.date === date));
     if (missingCells.length > 0) {
-      throw new Error(`CALENDAR_DATE_NOT_FOUND: ${venue.name} 날짜 cell을 찾지 못했습니다 (${missingCells.join(", ")})`);
+      throw diagnosticError({
+        type: "CALENDAR_DATE_NOT_FOUND",
+        stage: "CALENDAR",
+        provider: "gangdong",
+        venueId,
+        targetDate: missingCells.join(", "),
+        retryable: false,
+        message: `CALENDAR_DATE_NOT_FOUND: ${venue.name} 날짜 cell을 찾지 못했습니다 (${missingCells.join(", ")})`,
+        details: {
+          ...(await inspectPageBasics(page)),
+          targetDates: missingCells,
+          currentYearMonth: calendar.yearMonth,
+          visibleDates: calendar.dates.map((item) => item.date)
+        }
+      });
     }
 
-    const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseReservationDom(page, venueId));
+    const reservations = await maybeStep(timer, `${venue.name} 예약 데이터 파싱`, () => parseReservationDom(page, venueId)).catch((error) => {
+      throw diagnosticError({
+        type: "PARSE_FAILED",
+        stage: "PARSE",
+        provider: "gangdong",
+        venueId,
+        targetDate: dates[0] || null,
+        retryable: false,
+        message: error.message,
+        cause: error
+      });
+    });
     const hasSlotData = dates.some((date) => {
       const inspected = calendar.dates.find((item) => item.date === date);
       return inspected?.slotElementCount > 0;
@@ -55,7 +113,20 @@ export async function checkVenue(page, venueId, options = {}) {
       continue;
     }
     if (reservations.length === 0) {
-      throw new Error(`${venue.name} ${targetMonth} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`);
+      throw diagnosticError({
+        type: "PARSE_FAILED",
+        stage: "PARSE",
+        provider: "gangdong",
+        venueId,
+        targetDate: dates[0] || null,
+        retryable: false,
+        message: `${venue.name} ${targetMonth} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`,
+        details: {
+          targetMonth,
+          currentYearMonth: calendar.yearMonth,
+          visibleDates: calendar.dates.map((item) => item.date)
+        }
+      });
     }
 
     const neededDates = new Set(dates);
@@ -67,6 +138,33 @@ export async function checkVenue(page, venueId, options = {}) {
     results.push(...matches);
   }
   return results;
+}
+
+async function inspectPageBasics(page) {
+  const [title, bodyText] = await Promise.all([
+    page.title?.().catch(() => "") || "",
+    readBodyText(page)
+  ]);
+  const url = typeof page.url === "function" ? page.url() : "";
+  return {
+    url,
+    title,
+    redirect: /\/bbs\/login\.php|login/i.test(url),
+    bodySample: String(bodyText || "").replace(/\s+/g, " ").trim().slice(0, 300)
+  };
+}
+
+async function readBodyText(page) {
+  try {
+    const locator = page.locator?.("body");
+    if (!locator) return "";
+    if (typeof locator.innerText === "function") return await locator.innerText({ timeout: 3000 });
+    const first = locator.first?.();
+    if (typeof first?.innerText === "function") return await first.innerText({ timeout: 3000 });
+    return "";
+  } catch {
+    return "";
+  }
 }
 
 export async function inspectGangdongCalendar(page) {
@@ -183,19 +281,77 @@ export async function checkGangdongVenues(venueIds, options = {}) {
 
   const timer = createProviderTimer("강동");
   let errorForTimer = null;
-  const { context, page } = await timer.step("브라우저 세션", () => openGangdongSession());
+  let session = await timer.step("브라우저 세션", () => openGangdongSession()).catch((error) => {
+    throw diagnosticError({
+      type: classifyError(error, { stage: "BROWSER" }).type,
+      stage: "BROWSER",
+      provider: "gangdong",
+      retryable: true,
+      message: error.message,
+      cause: error
+    });
+  });
   try {
-    const loggedIn = await ensureLoggedIn(page, { timer });
-    if (!loggedIn) throw new Error("로그인 완료 여부를 확인하지 못했습니다.");
+    const loggedIn = await ensureLoggedIn(session.page, { timer });
+    if (!loggedIn) {
+      throw diagnosticError({
+        type: "LOGIN_OR_PROTECTION_PAGE",
+        stage: "AUTH_OR_PROTECTION",
+        provider: "gangdong",
+        retryable: false,
+        message: "로그인 완료 여부를 확인하지 못했습니다.",
+        details: await inspectPageBasics(session.page)
+      });
+    }
 
     const result = {};
     const errors = [];
+    const retryVenueIds = [];
     for (const venueId of ids) {
       try {
-        result[venueId] = await checkVenue(page, venueId, { dates: options.venueDates?.[venueId], timer });
+        result[venueId] = await checkVenue(session.page, venueId, { dates: options.venueDates?.[venueId], timer });
       } catch (error) {
-        errors.push({ provider: "gangdong", venueId, message: error.message });
-        console.warn(`강동: ${VENUES[venueId]?.name || venueId} 조회 실패`);
+        const diagnostic = classifyError(error, {
+          provider: "gangdong",
+          venueId,
+          targetDate: options.venueDates?.[venueId]?.join(", ") || null
+        });
+        errors.push(diagnostic);
+        if (diagnostic.retryable) retryVenueIds.push(venueId);
+        console.warn(`강동 조회 실패 | ${errorMessageForConsole(diagnostic)}`);
+        if (diagnostic.stack) console.warn(diagnostic.stack);
+      }
+    }
+    if (retryVenueIds.length > 0) {
+      await Promise.resolve(session.context.close()).catch((error) => console.warn(`강동 브라우저 세션 종료 실패: ${error.message}`));
+      await wait(options.retryDelayMs ?? 2500);
+      session = await timer.step("브라우저 세션 재시도", () => openGangdongSession());
+      const retryLoggedIn = await ensureLoggedIn(session.page, { timer });
+      if (!retryLoggedIn) {
+        const diagnostic = classifyError(new CheckDiagnosticError({
+          type: "LOGIN_OR_PROTECTION_PAGE",
+          stage: "AUTH_OR_PROTECTION",
+          provider: "gangdong",
+          retryable: false,
+          message: "재시도 로그인 완료 여부를 확인하지 못했습니다."
+        }));
+        for (const venueId of retryVenueIds) replaceVenueError(errors, venueId, { ...diagnostic, venueId, venueName: VENUES[venueId]?.name });
+      } else {
+        for (const venueId of retryVenueIds) {
+          try {
+            result[venueId] = await checkVenue(session.page, venueId, { dates: options.venueDates?.[venueId], timer });
+            removeVenueError(errors, venueId);
+          } catch (error) {
+            const diagnostic = classifyError(error, {
+              provider: "gangdong",
+              venueId,
+              targetDate: options.venueDates?.[venueId]?.join(", ") || null
+            });
+            replaceVenueError(errors, venueId, diagnostic);
+            console.warn(`강동 재시도 실패 | ${errorMessageForConsole(diagnostic)}`);
+            if (diagnostic.stack) console.warn(diagnostic.stack);
+          }
+        }
       }
     }
     return withCheckMeta(result, { errors });
@@ -203,7 +359,7 @@ export async function checkGangdongVenues(venueIds, options = {}) {
     errorForTimer = error;
     throw error;
   } finally {
-    await Promise.resolve(context.close()).catch((error) => console.warn(`강동 브라우저 세션 종료 실패: ${error.message}`));
+    await Promise.resolve(session?.context?.close()).catch((error) => console.warn(`강동 브라우저 세션 종료 실패: ${error.message}`));
     timer.end(errorForTimer);
   }
 }
@@ -224,7 +380,7 @@ export async function checkAllVenues(options = {}) {
   const olympicWatches = watches.filter(isOlympicWatch);
   const providerChecks = [
     safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
-    safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches))),
+    safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
     olympicWatches.length > 0 && config.enableOlympicProvider
       ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])
@@ -244,7 +400,7 @@ export async function runProviderCheck(providerId, fn, options = {}) {
   if (providerLocks.has(providerId)) {
     console.debug(`${providerId} check already running; duplicate check skipped.`);
     return withCheckMeta(providerId === "olympic" ? [] : {}, {
-      errors: [{ provider: providerId, message: "중복조회 생략" }]
+      errors: [{ provider: providerId, stage: "SCHEDULER", type: "DUPLICATE_SKIPPED", message: "중복조회 생략", retryable: false }]
     });
   }
 
@@ -266,9 +422,11 @@ async function safeProviderCheck(providerId, fn) {
   try {
     return await runProviderCheck(providerId, fn);
   } catch (error) {
-    console.error(`${PROVIDERS[providerId]?.name || providerId} 조회 실패: ${error.message}`);
+    const diagnostic = classifyError(error, { provider: providerId });
+    console.error(`${PROVIDERS[providerId]?.name || providerId} 조회 실패 | ${errorMessageForConsole(diagnostic)}`);
+    if (diagnostic.stack) console.error(diagnostic.stack);
     return withCheckMeta(providerId === "olympic" ? [] : {}, {
-      errors: [{ provider: providerId, message: error.message }]
+      errors: [diagnostic]
     });
   }
 }
@@ -294,6 +452,20 @@ function getCheckErrors(result) {
 
 function maybeStep(timer, label, fn) {
   return timer ? timer.step(label, fn) : fn();
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function removeVenueError(errors, venueId) {
+  const index = errors.findIndex((error) => error.venueId === venueId);
+  if (index >= 0) errors.splice(index, 1);
+}
+
+function replaceVenueError(errors, venueId, diagnostic) {
+  removeVenueError(errors, venueId);
+  errors.push(diagnostic);
 }
 
 export function buildVenueDateTargets(watches) {

@@ -61,6 +61,8 @@ export async function isLoggedIn(page) {
 
 export async function looksLikeProtectionOrLogin(page) {
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  const html = await page.content?.().catch(() => "") || "";
   const url = page.url();
-  return /WebGate|접근\s*차단|비정상|로그인 후|아이디|비밀번호/.test(body) || url.includes("/bbs/login.php");
+  return /WebGate|webgate\.js|WG_StartWebGate|접근\s*차단|비정상|로그인 후|아이디|비밀번호/.test(`${body}\n${html}`)
+    || url.includes("/bbs/login.php");
 }
