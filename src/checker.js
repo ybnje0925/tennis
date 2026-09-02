@@ -5,6 +5,7 @@ import { parseReservationDom } from "./parser.js";
 import { normalizeDate } from "./normalization.js";
 import { checkOlympicByWatches, isOlympicWatch } from "./providers/olympicProvider.js";
 import { checkSongpaVenues, songpaVenueIdsFromWatches } from "./providers/songpaProvider.js";
+import { checkHanamVenues, hanamVenueIdsFromWatches } from "./providers/hanamProvider.js";
 import { createProviderTimer, PROVIDER_HARD_TIMEOUT_MS, withTimeout } from "./providerTiming.js";
 import { CheckDiagnosticError, classifyError, diagnosticError, errorMessageForConsole } from "./diagnostics.js";
 import { fileURLToPath } from "node:url";
@@ -381,6 +382,7 @@ export async function checkAllVenues(options = {}) {
   const providerChecks = [
     safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
     safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
+    safeProviderCheck("hanam", () => checkHanamVenues(hanamVenueIdsFromWatches(watches), { venueDates, watches })),
     olympicWatches.length > 0 && config.enableOlympicProvider
       ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])

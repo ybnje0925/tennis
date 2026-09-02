@@ -2,7 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
-import { OLYMPIC_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
+import { OLYMPIC_TIME_SLOTS, ONE_HOUR_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
 import {
   addWatch,
   claimInviteCode,
@@ -117,6 +117,7 @@ app.get("/api/options", requireUser, (req, res) => {
     providers: PROVIDERS,
     timeSlots: TIME_SLOTS,
     olympicTimeSlots: OLYMPIC_TIME_SLOTS,
+    oneHourTimeSlots: ONE_HOUR_TIME_SLOTS,
     enableTestTools: config.enableTestTools
   });
 });
@@ -292,11 +293,11 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
     const venueValidation = validateVenueSelection(venues);
     if (!venueValidation.ok) throw new Error(venueValidation.message);
     if (!date) throw new Error("날짜를 선택하세요.");
-    const includesOlympic = venues.includes("olympic");
-    if (includesOlympic) {
-      if (!Array.isArray(times) || times.length === 0) throw new Error("올림픽공원 시간대를 선택하세요.");
+    const includesOneHour = venues.some((venueId) => VENUES[venueId]?.slotMinutes === 60);
+    if (includesOneHour) {
+      if (!Array.isArray(times) || times.length === 0) throw new Error("1시간 단위 시간대를 선택하세요.");
       for (const time of times) {
-        if (!OLYMPIC_TIME_SLOTS.includes(time)) throw new Error("올림픽공원 시간대 형식이 올바르지 않습니다.");
+        if (!ONE_HOUR_TIME_SLOTS.includes(time)) throw new Error("1시간 단위 시간대 형식이 올바르지 않습니다.");
       }
     } else if (!Array.isArray(times) || times.length === 0) {
       throw new Error("시간대를 선택하세요.");
@@ -305,7 +306,7 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
     const watch = await addWatch({
       userId: req.user.id,
       provider,
-      venue: includesOlympic ? "olympic" : undefined,
+      venue: venues.includes("olympic") ? "olympic" : undefined,
       venues,
       date,
       times

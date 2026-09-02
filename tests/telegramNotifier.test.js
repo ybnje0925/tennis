@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildAggregatedAvailabilityMessage,
   buildAvailabilityMessage,
   buildOlympicAvailabilityMessage
 } from "../src/telegramNotifier.js";
@@ -20,9 +21,9 @@ const olympicSlot = {
 
 describe("formatKoreanDateWithWeekday", () => {
   it("formats reservation dates with Korean weekday in KST", () => {
-    expect(formatKoreanDateWithWeekday("2026-08-27")).toBe("8월 27일 (목)");
-    expect(formatKoreanDateWithWeekday("2026-08-29")).toBe("8월 29일 (토)");
-    expect(formatKoreanDateWithWeekday("2026-08-30")).toBe("8월 30일 (일)");
+    expect(formatKoreanDateWithWeekday("2026-08-27")).toBe("2026-08-27 (목)");
+    expect(formatKoreanDateWithWeekday("2026-08-29")).toBe("2026-08-29 (토)");
+    expect(formatKoreanDateWithWeekday("2026-08-30")).toBe("2026-08-30 (일)");
   });
 });
 
@@ -37,8 +38,40 @@ describe("buildAvailabilityMessage", () => {
       availableCount: 1
     });
 
-    expect(message).toContain("8월 27일 (목)");
+    expect(message).toContain("2026-08-27 (목)");
     expect(message).toContain("06:00~08:00");
+  });
+});
+
+describe("buildAggregatedAvailabilityMessage", () => {
+  it("aggregates multiple Misa court slots into one message", () => {
+    const message = buildAggregatedAvailabilityMessage([
+      {
+        provider: "hanam",
+        facilityGroup: "misa",
+        venue: "misa-all",
+        venueName: "미사한강공원 테니스장 전체 코트",
+        courtNo: "2",
+        date: "2026-09-10",
+        startTime: "18:00",
+        endTime: "20:00"
+      },
+      {
+        provider: "hanam",
+        facilityGroup: "misa",
+        venue: "misa-all",
+        venueName: "미사한강공원 테니스장 전체 코트",
+        courtNo: "4",
+        date: "2026-09-10",
+        startTime: "20:00",
+        endTime: "22:00"
+      }
+    ]);
+
+    expect(message).toContain("미사한강공원 테니스장 빈자리!");
+    expect(message).toContain("2026-09-10 (목)");
+    expect(message).toContain("- 2코트 18:00~20:00");
+    expect(message).toContain("- 4코트 20:00~22:00");
   });
 });
 
@@ -48,7 +81,7 @@ describe("buildOlympicAvailabilityMessage", () => {
 
     expect(message).toContain("올림픽공원 테니스장 빈자리!");
     expect(message).toContain("7번 코트");
-    expect(message).toContain("8월 29일 (토)");
+    expect(message).toContain("2026-08-29 (토)");
     expect(message).toContain("18:00~19:00");
   });
 });

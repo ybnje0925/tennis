@@ -56,6 +56,69 @@ export const VENUES = {
     publicUrl: "https://www.ksponco.or.kr/online/tennis/index.do",
     provider: "olympic",
     slotMinutes: 60
+  },
+  "hanam-tennis-1": {
+    id: "hanam-tennis-1",
+    name: "하남 제1테니스장",
+    url: "https://rent.hanamsport.or.kr/hanam_rent_ms/",
+    publicUrl: "https://rent.hanamsport.or.kr/hanam_rent_ms/",
+    provider: "hanam",
+    slotMinutes: 60,
+    placeCode: "024"
+  },
+  "hanam-tennis-2": {
+    id: "hanam-tennis-2",
+    name: "하남 제2테니스장",
+    url: "https://rent.hanamsport.or.kr/hanam_rent_ms/",
+    publicUrl: "https://rent.hanamsport.or.kr/hanam_rent_ms/",
+    provider: "hanam",
+    slotMinutes: 60,
+    placeCode: "025"
+  },
+  "misa-all": {
+    id: "misa-all",
+    name: "미사한강공원 테니스장 전체 코트",
+    url: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    publicUrl: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    provider: "hanam",
+    slotMinutes: 120,
+    misaCourt: "ALL"
+  },
+  "misa-court-1": {
+    id: "misa-court-1",
+    name: "미사한강공원 테니스장 1코트",
+    url: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    publicUrl: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    provider: "hanam",
+    slotMinutes: 120,
+    misaCourt: "1"
+  },
+  "misa-court-2": {
+    id: "misa-court-2",
+    name: "미사한강공원 테니스장 2코트",
+    url: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    publicUrl: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    provider: "hanam",
+    slotMinutes: 120,
+    misaCourt: "2"
+  },
+  "misa-court-3": {
+    id: "misa-court-3",
+    name: "미사한강공원 테니스장 3코트",
+    url: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    publicUrl: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    provider: "hanam",
+    slotMinutes: 120,
+    misaCourt: "3"
+  },
+  "misa-court-4": {
+    id: "misa-court-4",
+    name: "미사한강공원 테니스장 4코트",
+    url: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    publicUrl: "https://www.hanam.go.kr/www/selectMisaParkResveWeb.do?key=7465&searchCategoryCode=B1",
+    provider: "hanam",
+    slotMinutes: 120,
+    misaCourt: "4"
   }
 };
 
@@ -98,6 +161,16 @@ export const PROVIDERS = {
     supportsCourtNumber: false,
     supportsContinuousSlots: false,
     venues: ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"]
+  },
+  hanam: {
+    id: "hanam",
+    name: "하남시 테니스장",
+    slotMinutes: 60,
+    pollingMinutes: config.providerPollingMinutes.hanam ?? 5,
+    publicUrl: "https://rent.hanamsport.or.kr/hanam_rent_ms/",
+    supportsCourtNumber: true,
+    supportsContinuousSlots: false,
+    venues: ["hanam-tennis-1", "hanam-tennis-2", "misa-all", "misa-court-1", "misa-court-2", "misa-court-3", "misa-court-4"]
   }
 };
 
@@ -130,3 +203,5 @@ export const OLYMPIC_TIME_SLOTS = [
   "20:00~21:00",
   "21:00~22:00"
 ];
+
+export const ONE_HOUR_TIME_SLOTS = OLYMPIC_TIME_SLOTS;

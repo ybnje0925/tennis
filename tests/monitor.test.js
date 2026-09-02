@@ -834,6 +834,34 @@ describe("runCheckCycle active watch targeting", () => {
     expect(summaryLog(current)).toContain("올림픽 1/1 성공");
   });
 
+  it("checks Hanam on the shared fixed scheduler slot", async () => {
+    const current = state({
+      watches: [
+        { id: "h", userId: "u1", provider: "hanam", venues: ["hanam-tennis-1"], date: "2026-09-10", times: ["18:00~19:00"], enabled: true }
+      ]
+    });
+    const checker = vi.fn(async ({ watches }) => {
+      expect(watches.map((watch) => watch.id)).toEqual(["h"]);
+      return {
+        "hanam-tennis-1": [{
+          provider: "hanam",
+          venue: "hanam-tennis-1",
+          venueName: "하남 제1테니스장",
+          date: "2026-09-10",
+          startTime: "18:00",
+          endTime: "19:00",
+          time: "18:00~19:00",
+          available: false
+        }]
+      };
+    });
+
+    await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-26T00:00:00.000Z") });
+
+    expect(checker).toHaveBeenCalledTimes(1);
+    expect(summaryLog(current)).toContain("하남 1/1 성공");
+  });
+
   it("stores scheduler run times from the same cycle clock used by logs", async () => {
     const current = state();
     const checker = vi.fn(async () => ({

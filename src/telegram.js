@@ -1,4 +1,5 @@
 import {
+  buildAggregatedAvailabilityMessage,
   buildAvailabilityMessage,
   canSendTelegram,
   sendTelegramMessage
@@ -12,4 +13,8 @@ export async function sendTelegram(message, chatId) {
 
 export function buildNotificationMessage(item) {
   return buildAvailabilityMessage(item);
+}
+
+export function buildNotificationDigest(items) {
+  return buildAggregatedAvailabilityMessage(items);
 }

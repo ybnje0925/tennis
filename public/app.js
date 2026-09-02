@@ -26,16 +26,19 @@ const gangilStatusEl = document.querySelector("#gangilStatus");
 const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
 const songpaStatusEl = document.querySelector("#songpaStatus");
+const hanamStatusEl = document.querySelector("#hanamStatus");
 const reservationLinks = {
   gangil: document.querySelector("#gangilLink"),
   myeongil: document.querySelector("#myeongilLink"),
   olympic: document.querySelector("#olympicLink"),
-  songpa: document.querySelector("#songpaLink")
+  songpa: document.querySelector("#songpaLink"),
+  hanam: document.querySelector("#hanamLink")
 };
 const venueGroupsEl = document.querySelector("#venueGroups");
 const venueSelectionHelpEl = document.querySelector("#venueSelectionHelp");
 let gangdongTimeSlots = [];
 let olympicTimeSlots = [];
+let oneHourTimeSlots = [];
 let venueGroups = { twoHour: [], oneHour: [] };
 let venueOptions = [];
 let venueNames = {};
@@ -106,6 +109,7 @@ async function loadOptions() {
   const options = await request("/api/options");
   gangdongTimeSlots = options.timeSlots;
   olympicTimeSlots = options.olympicTimeSlots;
+  oneHourTimeSlots = options.oneHourTimeSlots || options.olympicTimeSlots;
   venueGroups = options.venueGroups;
   venueOptions = options.venues;
   venueNames = Object.fromEntries(venueOptions.map((venue) => [venue.id, venue.name]));
@@ -135,7 +139,8 @@ function updateReservationLinks() {
     gangil: venuePublicUrls.gangil,
     myeongil: venuePublicUrls.myeongil,
     olympic: venuePublicUrls.olympic,
-    songpa: providerPublicUrls.songpa
+    songpa: providerPublicUrls.songpa,
+    hanam: providerPublicUrls.hanam
   };
 
   for (const [id, url] of Object.entries(links)) {
@@ -165,10 +170,12 @@ async function loadStatus() {
   nextCheckEl.textContent = formatDateTime(status.currentUserNextCheckAt);
   const gangdongActive = Boolean(status.activeVenues?.gangil || status.activeVenues?.myeongil);
   const songpaActive = ["songpa-oryun", "songpa-seongnaecheon", "songpa-songpa", "songpa-ogeum"].some((id) => status.activeVenues?.[id]);
+  const hanamActive = ["hanam-tennis-1", "hanam-tennis-2", "misa-all", "misa-court-1", "misa-court-2", "misa-court-3", "misa-court-4"].some((id) => status.activeVenues?.[id]);
   gangilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
   myeongilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
+  hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
   logsEl.innerHTML = (status.logs || []).length
     ? status.logs.slice().reverse().map((line) => `<div>${line}</div>`).join("")
     : `<p class="empty">아직 로그가 없습니다.</p>`;
@@ -310,7 +317,6 @@ form.addEventListener("change", () => {
 
 function updateVenueSelection() {
   const data = new FormData(form);
-  const olympicSelected = data.getAll("venues").includes("olympic");
   const selectedSlotMinutes = getSelectedSlotMinutes(data.getAll("venues"));
   for (const input of form.querySelectorAll("input[name='venues']")) {
     const slotMinutes = Number(input.dataset.slotMinutes);
@@ -320,13 +326,13 @@ function updateVenueSelection() {
   if (selectedSlotMinutes === 120) {
     venueSelectionHelpEl.textContent = "예약단위가 다른 테니스장은 함께 선택할 수 없습니다.";
   } else if (selectedSlotMinutes === 60) {
-    venueSelectionHelpEl.textContent = "올림픽공원은 1시간 단위 예약 시설입니다. 2시간 단위 시설과 별도로 알림을 등록해주세요.";
+    venueSelectionHelpEl.textContent = "1시간 단위 예약 시설입니다. 2시간 단위 시설과 별도로 알림을 등록해주세요.";
   } else {
     venueSelectionHelpEl.textContent = "";
   }
 
-  timeSlotsLegendEl.textContent = olympicSelected ? "올림픽공원 시간대" : "시간대";
-  renderTimeSlots(olympicSelected ? olympicTimeSlots : gangdongTimeSlots);
+  timeSlotsLegendEl.textContent = selectedSlotMinutes === 60 ? "1시간 단위 시간대" : "시간대";
+  renderTimeSlots(selectedSlotMinutes === 60 ? oneHourTimeSlots : gangdongTimeSlots);
 }
 
 function renderVenueGroups() {

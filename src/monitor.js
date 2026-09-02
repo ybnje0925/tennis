@@ -2,13 +2,18 @@ import cron from "node-cron";
 import { config } from "./config.js";
 import { PROVIDERS, VENUES } from "./constants.js";
 import { CHECK_META, checkAllVenues } from "./checker.js";
-import { buildNotificationMessage, sendTelegram } from "./telegram.js";
+import { buildNotificationDigest, buildNotificationMessage, sendTelegram } from "./telegram.js";
 import { loadState, saveState, updateState } from "./storage.js";
 import {
   filterOlympicSlotsByWatch,
   isOlympicWatch,
   olympicKeyFor
 } from "./providers/olympicProvider.js";
+import {
+  filterHanamSlotsByWatch,
+  hanamKeyFor,
+  isHanamWatch
+} from "./providers/hanamProvider.js";
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 import { classifyError } from "./diagnostics.js";
 
@@ -20,6 +25,7 @@ export const SCHEDULER_VERSION = "provider-pending-v2";
 
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
+  if (item.provider === "hanam" && item.courtNo) return hanamKeyFor(item);
   return reservationKey(item);
 }
 
@@ -74,6 +80,27 @@ export function findNotifications(state, reservations) {
         if (!sentKey.startsWith(`${watch.id}|`)) continue;
         const key = sentKey.slice(`${watch.id}|`.length);
         if (key.startsWith("olympic|") && !currentKeys.has(key)) {
+          state.lastAvailability[key] = { available: false };
+        }
+      }
+
+      for (const item of matches) {
+        const key = keyFor(item);
+        const previous = availabilityValue(state.lastAvailability[key]);
+        const wasUnavailable = previous !== true;
+        const alreadySent = state.sentNotifications[`${watch.id}|${key}`];
+        if (wasUnavailable || !alreadySent) notifications.push({ watch, item, key });
+      }
+      continue;
+    }
+
+    if (isHanamWatch(watch)) {
+      const matches = filterHanamSlotsByWatch(reservations, watch);
+      const currentKeys = new Set(matches.map(keyFor));
+      for (const sentKey of Object.keys(state.sentNotifications || {})) {
+        if (!sentKey.startsWith(`${watch.id}|`)) continue;
+        const key = sentKey.slice(`${watch.id}|`.length);
+        if (key.startsWith("hanam|") && !currentKeys.has(key)) {
           state.lastAvailability[key] = { available: false };
         }
       }
@@ -640,27 +667,32 @@ export async function runCheckCycle({
   }
 
   let alertCount = 0;
-  for (const notification of notificationPlan.notifications) {
+  for (const group of notificationGroups(notificationPlan.notifications)) {
     try {
-      const user = notificationPlan.usersById[notification.watch.userId];
+      const user = notificationPlan.usersById[group.watch.userId];
       if (!user?.telegramChatId || user.enabled === false) continue;
-      await notifier(buildNotificationMessage(notification.item), user.telegramChatId);
+      const message = group.notifications.length > 1
+        ? buildNotificationDigest(group.notifications.map((notification) => notification.item))
+        : buildNotificationMessage(group.notifications[0].item);
+      await notifier(message, user.telegramChatId);
       await mutateState((latest) => {
-        latest.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
-        latest.lastAvailability[notification.key] = {
-          provider: notification.item.provider,
-          venue: notification.item.venue,
-          courtType: notification.item.courtType,
-          courtNo: notification.item.courtNo,
-          date: notification.item.date,
-          time: notification.item.time,
-          startTime: notification.item.startTime,
-          endTime: notification.item.endTime,
-          available: true,
-          checkedAt
-        };
+        for (const notification of group.notifications) {
+          latest.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
+          latest.lastAvailability[notification.key] = {
+            provider: notification.item.provider,
+            venue: notification.item.venue,
+            courtType: notification.item.courtType,
+            courtNo: notification.item.courtNo,
+            date: notification.item.date,
+            time: notification.item.time,
+            startTime: notification.item.startTime,
+            endTime: notification.item.endTime,
+            available: true,
+            checkedAt
+          };
+        }
       });
-      alertCount += 1;
+      alertCount += group.notifications.length;
     } catch (error) {
       errors.push(error.message);
       console.error(`Telegram 알림 발송 실패: ${error.message}`);
@@ -691,6 +723,22 @@ export async function runCheckCycle({
 
   runPendingProviderChecks(pendingProviderIds, { checker, notifier, stateLoader, stateSaver });
   return { checkedAt, reservations, notifications: notificationPlan.notifications, errors };
+}
+
+function notificationGroups(notifications) {
+  const groups = new Map();
+  for (const notification of notifications) {
+    const item = notification.item;
+    const key = [
+      notification.watch.id,
+      item.provider,
+      item.facilityGroup || item.venue,
+      item.date
+    ].join("|");
+    if (!groups.has(key)) groups.set(key, { watch: notification.watch, notifications: [] });
+    groups.get(key).notifications.push(notification);
+  }
+  return Array.from(groups.values());
 }
 
 function providerRuntime(providerId) {
@@ -845,7 +893,7 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
   const parts = [allFailed ? "조회실패" : "조회완료"];
   const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
 
-  for (const providerId of ["gangdong", "songpa", "olympic"]) {
+  for (const providerId of ["gangdong", "songpa", "olympic", "hanam"]) {
     if (!activeProviders.has(providerId)) continue;
     if (skipped.has(providerId)) {
       parts.push(`${providerLabel(providerId)} SKIP(${skipped.get(providerId)})`);
@@ -870,6 +918,7 @@ function providerLabel(providerId) {
   if (providerId === "gangdong") return "강동";
   if (providerId === "songpa") return "송파";
   if (providerId === "olympic") return "올림픽";
+  if (providerId === "hanam") return "하남";
   return providerId;
 }
 
@@ -893,7 +942,7 @@ function providerSummary(providerId, venueIds, checked, errors) {
     return "올림픽 1/1 성공";
   }
 
-  const label = providerId === "gangdong" ? "강동" : "송파";
+  const label = providerLabel(providerId);
   const failedVenueIds = new Set(providerErrors.map((error) => error.venueId).filter(Boolean));
   const successCount = venueIds.filter((venueId) => (
     Object.prototype.hasOwnProperty.call(checked, venueId) && !failedVenueIds.has(venueId)
@@ -952,6 +1001,13 @@ export function countMatchingAvailableItems(state, reservations) {
       continue;
     }
 
+    if (isHanamWatch(watch)) {
+      for (const item of filterHanamSlotsByWatch(reservations, watch)) {
+        matches.add(keyFor(item));
+      }
+      continue;
+    }
+
     for (const venue of watch.venues || []) {
       for (const time of watch.times || []) {
         const key = reservationKey({ venue, date: watch.date, time });
@@ -1003,6 +1059,6 @@ export function startScheduler() {
   schedulerTask = task;
   console.log(`Scheduler started: provider polling due check every 1 minute.`);
   console.log(`Scheduler version: ${SCHEDULER_VERSION}`);
-  console.log(`Polling | 강동 ${PROVIDERS.gangdong.pollingMinutes}분 | 송파 ${PROVIDERS.songpa.pollingMinutes}분 | 올림픽 ${PROVIDERS.olympic.pollingMinutes}분`);
+  console.log(`Polling | 강동 ${PROVIDERS.gangdong.pollingMinutes}분 | 송파 ${PROVIDERS.songpa.pollingMinutes}분 | 올림픽 ${PROVIDERS.olympic.pollingMinutes}분 | 하남 ${PROVIDERS.hanam.pollingMinutes}분`);
   return task;
 }

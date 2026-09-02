@@ -32,7 +32,7 @@ export function formatKoreanDateWithWeekday(value) {
     timeZone: SERVICE_TIME_ZONE
   }).format(date);
 
-  return `${parts.month}월 ${parts.day}일 (${weekday})`;
+  return `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")} (${weekday})`;
 }
 
 export function formatKoreanFullDateWithWeekday(value) {

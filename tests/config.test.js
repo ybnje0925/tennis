@@ -9,7 +9,8 @@ async function loadConfigWith(env) {
     "CHECK_INTERVAL_MINUTES",
     "GANGDONG_POLLING_MINUTES",
     "SONGPA_POLLING_MINUTES",
-    "OLYMPIC_POLLING_MINUTES"
+    "OLYMPIC_POLLING_MINUTES",
+    "HANAM_POLLING_MINUTES"
   ]) {
     if (env[key] === undefined) process.env[key] = "";
   }
@@ -28,7 +29,8 @@ describe("provider polling minutes config", () => {
     expect(config.providerPollingMinutes).toEqual({
       gangdong: 5,
       songpa: 5,
-      olympic: 5
+      olympic: 5,
+      hanam: 5
     });
   });
 
@@ -38,6 +40,7 @@ describe("provider polling minutes config", () => {
     expect(config.providerPollingMinutes.gangdong).toBe(3);
     expect(config.providerPollingMinutes.songpa).toBe(5);
     expect(config.providerPollingMinutes.olympic).toBe(5);
+    expect(config.providerPollingMinutes.hanam).toBe(5);
   });
 
   it("allows Songpa to use its own polling minutes", async () => {
@@ -50,6 +53,12 @@ describe("provider polling minutes config", () => {
     const { config } = await loadConfigWith({ OLYMPIC_POLLING_MINUTES: "10" });
 
     expect(config.providerPollingMinutes.olympic).toBe(10);
+  });
+
+  it("allows Hanam to use its own polling minutes", async () => {
+    const { config } = await loadConfigWith({ HANAM_POLLING_MINUTES: "6" });
+
+    expect(config.providerPollingMinutes.hanam).toBe(6);
   });
 
   it("falls back to 5 for zero and non-numeric values", async () => {
@@ -86,7 +95,8 @@ describe("provider polling minutes config", () => {
     expect(config.providerPollingMinutes).toEqual({
       gangdong: 5,
       songpa: 5,
-      olympic: 5
+      olympic: 5,
+      hanam: 5
     });
   });
 });

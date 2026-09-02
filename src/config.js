@@ -40,7 +40,8 @@ export const config = {
   providerPollingMinutes: {
     gangdong: parsePollingMinutes(process.env.GANGDONG_POLLING_MINUTES, defaultPollingMinutes),
     songpa: parsePollingMinutes(process.env.SONGPA_POLLING_MINUTES, defaultPollingMinutes),
-    olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, defaultPollingMinutes)
+    olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, defaultPollingMinutes),
+    hanam: parsePollingMinutes(process.env.HANAM_POLLING_MINUTES, defaultPollingMinutes)
   }
 };
 

@@ -96,6 +96,7 @@ export function buildTelegramTestMessage() {
 }
 
 export function buildAvailabilityMessage(item) {
+  if (item.provider === "hanam") return buildHanamAvailabilityMessage(item);
   if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);
 
   const venue = VENUES[item.venue];
@@ -116,6 +117,53 @@ export function buildAvailabilityMessage(item) {
     "지금 예약사이트를 확인하세요.",
     venue?.url ?? ""
   ].filter(Boolean).join("\n");
+}
+
+export function buildHanamAvailabilityMessage(item) {
+  const venue = VENUES[item.venue];
+  return [
+    "🎾 테니스 잡아줘",
+    "",
+    `${displayVenueName(item)} 빈자리!`,
+    "",
+    item.courtNo ? `${item.courtNo}코트` : null,
+    formatKoreanDateWithWeekday(item.date),
+    `${item.startTime}~${item.endTime}`,
+    "",
+    "예약 가능합니다.",
+    venue?.url ?? ""
+  ].filter(Boolean).join("\n");
+}
+
+export function buildAggregatedAvailabilityMessage(items) {
+  if (!Array.isArray(items) || items.length === 0) return "";
+  if (items.length === 1) return buildAvailabilityMessage(items[0]);
+
+  const first = items[0];
+  const venue = VENUES[first.venue];
+  const lines = items
+    .slice()
+    .sort((a, b) => `${a.date} ${a.startTime} ${a.courtNo || ""}`.localeCompare(`${b.date} ${b.startTime} ${b.courtNo || ""}`))
+    .map((item) => `- ${item.courtNo ? `${item.courtNo}코트 ` : ""}${item.startTime || item.time?.split("~")[0]}~${item.endTime || item.time?.split("~")[1]}`);
+
+  return [
+    "🎾 테니스 잡아줘",
+    "",
+    `${displayVenueName(first)} 빈자리!`,
+    "",
+    formatKoreanDateWithWeekday(first.date),
+    "",
+    "예약 가능",
+    ...lines,
+    "",
+    "지금 예약사이트를 확인하세요.",
+    venue?.url ?? ""
+  ].filter(Boolean).join("\n");
+}
+
+function displayVenueName(item) {
+  if (item.facilityGroup === "misa") return "미사한강공원 테니스장";
+  return item.venueName || VENUES[item.venue]?.name || item.venue;
 }
 
 export function buildOlympicAvailabilityMessage(item) {
