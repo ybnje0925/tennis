@@ -176,10 +176,149 @@ async function loadStatus() {
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
-  logsEl.innerHTML = (status.logs || []).length
-    ? status.logs.slice().reverse().map((line) => `<div>${line}</div>`).join("")
-    : `<p class="empty">아직 로그가 없습니다.</p>`;
+  renderLogs(status);
   buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
+}
+
+function renderLogs(status) {
+  const logs = status.logs || [];
+  const details = status.logDetails || [];
+  logsEl.innerHTML = "";
+  if (logs.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "아직 로그가 없습니다.";
+    logsEl.append(empty);
+    return;
+  }
+
+  logs
+    .map((line, index) => ({ line, detail: details[index] || null }))
+    .reverse()
+    .forEach(({ line, detail }) => logsEl.append(createLogEntry(line, detail, status.providers || {})));
+}
+
+function createLogEntry(line, detail, providers) {
+  const lines = String(line || "").split("\n").filter(Boolean);
+  const summaryText = lines[0] || "-";
+  const embeddedDetails = lines.slice(1);
+  const fallbackErrors = fallbackProviderErrors(summaryText, providers);
+  const hasDetails = embeddedDetails.length > 0 || fallbackErrors.length > 0 || detail?.errors?.length || detail?.facilities?.length || detail?.skippedProviders?.length;
+
+  if (!hasDetails) {
+    const row = document.createElement("div");
+    row.className = "log-line";
+    row.textContent = summaryText;
+    return row;
+  }
+
+  const entry = document.createElement("details");
+  entry.className = `log-entry ${/실패|ERROR|TIMEOUT|BLOCKED|NOT_FOUND/.test(line) ? "has-error" : ""}`;
+  const summary = document.createElement("summary");
+  summary.textContent = summaryText;
+  entry.append(summary);
+
+  const body = document.createElement("div");
+  body.className = "log-detail";
+  if (embeddedDetails.length > 0) {
+    const embedded = document.createElement("div");
+    embedded.className = "log-detail-block";
+    embeddedDetails.forEach((item) => {
+      const lineEl = document.createElement("p");
+      lineEl.textContent = item;
+      embedded.append(lineEl);
+    });
+    body.append(embedded);
+  }
+
+  const errors = detail?.errors?.length ? detail.errors : fallbackErrors;
+  if (errors.length > 0) body.append(renderErrorDetails(errors));
+  if (detail?.facilities?.length) body.append(renderFacilityDetails(detail.facilities));
+  if (detail?.skippedProviders?.length) body.append(renderSkippedProviderDetails(detail.skippedProviders));
+
+  entry.append(body);
+  return entry;
+}
+
+function renderErrorDetails(errors) {
+  const section = document.createElement("section");
+  section.className = "log-detail-block";
+  section.append(logDetailTitle("문제 상세"));
+  errors.forEach((error) => {
+    const row = document.createElement("dl");
+    row.className = "log-detail-grid";
+    appendDetail(row, "시설", error.venueName || error.providerName || error.provider || "-");
+    appendDetail(row, "날짜", error.targetDate || "-");
+    appendDetail(row, "단계", error.stage || "-");
+    appendDetail(row, "유형", error.type || "UNKNOWN");
+    appendDetail(row, "원인", error.message || "-");
+    section.append(row);
+  });
+  return section;
+}
+
+function renderFacilityDetails(facilities) {
+  const section = document.createElement("section");
+  section.className = "log-detail-block";
+  section.append(logDetailTitle("시설별 처리 상태"));
+  facilities.forEach((facility) => {
+    const row = document.createElement("p");
+    row.textContent = `${facility.venueName || facility.venueId}: ${facilityStatusLabel(facility.status)} · 결과 ${facility.count ?? 0}건`;
+    section.append(row);
+  });
+  return section;
+}
+
+function renderSkippedProviderDetails(skippedProviders) {
+  const section = document.createElement("section");
+  section.className = "log-detail-block";
+  section.append(logDetailTitle("건너뜀"));
+  skippedProviders.forEach((provider) => {
+    const row = document.createElement("p");
+    row.textContent = `${provider.providerName || provider.provider}: ${provider.reason || "-"}`;
+    section.append(row);
+  });
+  return section;
+}
+
+function logDetailTitle(text) {
+  const title = document.createElement("h3");
+  title.textContent = text;
+  return title;
+}
+
+function appendDetail(row, label, value) {
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const description = document.createElement("dd");
+  description.textContent = value;
+  row.append(term, description);
+}
+
+function facilityStatusLabel(status) {
+  if (status === "checked") return "조회됨";
+  if (status === "failed") return "실패";
+  if (status === "skipped") return "건너뜀";
+  return "이번 주기 조회 대상 아님";
+}
+
+function fallbackProviderErrors(line, providers) {
+  const labels = {
+    gangdong: "강동",
+    songpa: "송파",
+    olympic: "올림픽",
+    hanam: "하남"
+  };
+  return Object.entries(labels)
+    .filter(([providerId, label]) => line.includes(label) && providers[providerId]?.lastError)
+    .map(([providerId, label]) => ({
+      provider: providerId,
+      providerName: label,
+      message: providers[providerId].lastError,
+      type: "LAST_PROVIDER_ERROR",
+      targetDate: null,
+      stage: null
+    }));
 }
 
 function shortCommit(value) {

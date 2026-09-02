@@ -132,15 +132,19 @@ export function findNotifications(state, reservations) {
   return notifications;
 }
 
-export function addLog(state, message, date = new Date()) {
+export function addLog(state, message, date = new Date(), details = null) {
   const time = new Intl.DateTimeFormat("ko-KR", {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
     timeZone: SERVICE_TIME_ZONE
   }).format(date);
-  state.system.logs.push(`[${time}] ${message}`);
+  const line = `[${time}] ${message}`;
+  state.system.logs.push(line);
   state.system.logs = state.system.logs.slice(-30);
+  state.system.logDetails ||= [];
+  state.system.logDetails.push(details ? { line, ...details } : null);
+  state.system.logDetails = state.system.logDetails.slice(-state.system.logs.length);
 }
 
 export function activeProviderVenueIds(activeVenueIds) {
@@ -395,7 +399,7 @@ function mergeProviderFailure(state, {
     skippedProviders,
     vacancyCount: 0,
     alertCount: 0
-  }), now);
+  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -448,7 +452,7 @@ function mergeProviderSuccess(state, {
     skippedProviders,
     vacancyCount,
     alertCount
-  }), now);
+  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -541,7 +545,7 @@ export async function runCheckCycle({
             skippedProviders,
             vacancyCount: 0,
             alertCount: 0
-          }), now);
+          }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders, checkedAt: new Date().toISOString() }));
           finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
         }
       });
@@ -589,7 +593,7 @@ export async function runCheckCycle({
           skippedProviders,
           vacancyCount: 0,
           alertCount: 0
-        }), now);
+        }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders, checkedAt: new Date().toISOString() }));
         finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
       });
       return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true };
@@ -828,8 +832,58 @@ function summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders) {
 function addSkipLogs(state, skippedProviders, now) {
   for (const { provider, reason } of skippedProviders) {
     if (provider !== "olympic" || reason !== "운영시간 외") continue;
-    addLog(state, `[올림픽공원] 조회 SKIP | 운영시간 외 (${outsideMonitoringHoursLabel(provider)})`, now);
+    addLog(state, `[올림픽공원] 조회 SKIP | 운영시간 외 (${outsideMonitoringHoursLabel(provider)})`, now, {
+      kind: "provider-skip",
+      provider,
+      providerName: providerLabel(provider),
+      reason
+    });
   }
+}
+
+function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], checkedAt }) {
+  const errors = (checked?.[CHECK_META]?.errors || []).map(safeDiagnostic);
+  return {
+    kind: errors.length > 0 ? "provider-error" : "provider-check",
+    checkedAt,
+    facilities: activeVenueIds.map((venueId) => facilityLogDetail(venueId, checked, errors)),
+    skippedProviders: skippedProviders.map(({ provider, reason }) => ({
+      provider,
+      providerName: providerLabel(provider),
+      reason
+    })),
+    errors
+  };
+}
+
+function facilityLogDetail(venueId, checked, errors) {
+  const provider = VENUES[venueId]?.provider || null;
+  return {
+    venueId,
+    venueName: VENUES[venueId]?.name || venueId,
+    provider,
+    providerName: providerLabel(provider),
+    status: Object.prototype.hasOwnProperty.call(checked, venueId) || Object.prototype.hasOwnProperty.call(checked, provider)
+      ? "checked"
+      : errors.some((error) => error.venueId === venueId)
+        ? "failed"
+        : "not-due",
+    count: checked[venueId]?.length ?? checked[provider]?.length ?? 0
+  };
+}
+
+function safeDiagnostic(error) {
+  return {
+    provider: error.provider || null,
+    providerName: providerLabel(error.provider),
+    venueId: error.venueId || null,
+    venueName: error.venueName || VENUES[error.venueId]?.name || null,
+    targetDate: error.targetDate || null,
+    stage: error.stage || null,
+    type: error.type || null,
+    message: error.message || "",
+    retryable: Boolean(error.retryable)
+  };
 }
 
 function finishRunState(state, now, activeVenueIds, checked = {}, skippedProviders = [], checkedAt = new Date().toISOString()) {

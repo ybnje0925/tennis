@@ -292,9 +292,82 @@ button.primary {
   font-size: 14px;
 }
 
-.logs div {
+.log-line,
+.log-entry {
   padding-bottom: 8px;
   border-bottom: 1px solid #edf2ec;
+}
+
+.log-entry {
+  border-radius: 6px;
+}
+
+.log-entry summary {
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.log-entry summary:hover,
+.log-entry summary:focus-visible {
+  background: #f1f6f0;
+  outline: none;
+}
+
+.log-entry.has-error summary {
+  color: #8a3b24;
+  font-weight: 700;
+}
+
+.log-detail {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #fbfcfb;
+  color: #29372c;
+}
+
+.log-detail-block {
+  display: grid;
+  gap: 6px;
+}
+
+.log-detail h3 {
+  margin: 0;
+  color: #617064;
+  font-size: 13px;
+}
+
+.log-detail p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.log-detail-grid {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.log-detail-grid dt {
+  color: #617064;
+  font-weight: 700;
+}
+
+.log-detail-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .build-info {

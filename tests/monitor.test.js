@@ -428,6 +428,18 @@ describe("runCheckCycle active watch targeting", () => {
     expect(current.system.providers.gangdong.lastSuccessfulCheckAt).toBeFalsy();
     expect(current.system.logs.at(-1)).toContain("조회실패 | 강동 0/1 성공 · 1 실패");
     expect(current.system.logs.at(-1)).not.toContain("빈자리 0건");
+    expect(current.system.logDetails.at(-1).errors[0]).toMatchObject({
+      provider: "gangdong",
+      venueId: "gangil",
+      venueName: "강일테니스장",
+      targetDate: "2026-08-29",
+      type: "TIMEOUT",
+      message: "timeout"
+    });
+    expect(current.system.logDetails.at(-1).facilities[0]).toMatchObject({
+      venueId: "gangil",
+      status: "failed"
+    });
   });
 
   it("distinguishes a successful zero-vacancy check from a failed check", async () => {
