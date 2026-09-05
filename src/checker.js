@@ -387,12 +387,14 @@ export async function checkAllVenues(options = {}) {
       ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])
   ];
-  const [gangdong, songpa, olympicResult] = await Promise.all(providerChecks);
+  const [gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);
 
   Object.assign(result, stripCheckMeta(gangdong));
   meta.errors.push(...getCheckErrors(gangdong));
   Object.assign(result, stripCheckMeta(songpa));
   meta.errors.push(...getCheckErrors(songpa));
+  Object.assign(result, stripCheckMeta(hanam));
+  meta.errors.push(...getCheckErrors(hanam));
   meta.errors.push(...getCheckErrors(olympicResult));
   if (olympicWatches.length > 0 && config.enableOlympicProvider && olympicResult) result.olympic = olympicResult;
   return withCheckMeta(result, meta);

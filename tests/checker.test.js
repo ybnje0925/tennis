@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const openGangdongSession = vi.fn();
 const looksLikeProtectionOrLogin = vi.fn(async () => false);
+const checkHanamVenues = vi.fn(async () => ({}));
 const parseReservationDom = vi.fn(async () => [
   {
     venue: "gangil",
@@ -87,12 +88,21 @@ vi.mock("../src/parser.js", () => ({
   parseReservationDom
 }));
 
+vi.mock("../src/providers/hanamProvider.js", () => ({
+  checkHanamVenues,
+  hanamVenueIdsFromWatches: (watches = []) => Array.from(new Set(
+    watches.flatMap((watch) => watch.venues || []).filter((venueId) => String(venueId).startsWith("hanam-") || String(venueId).startsWith("misa-"))
+  ))
+}));
+
 const { checkAllVenues, checkGangdongVenues, checkVenue, groupDatesByMonth, runProviderCheck } = await import("../src/checker.js");
 
 beforeEach(() => {
   openGangdongSession.mockReset();
   looksLikeProtectionOrLogin.mockReset();
   looksLikeProtectionOrLogin.mockResolvedValue(false);
+  checkHanamVenues.mockReset();
+  checkHanamVenues.mockResolvedValue({});
   parseReservationDom.mockReset();
   parseReservationDom.mockImplementation(async () => [
     {
@@ -147,6 +157,41 @@ describe("checkAllVenues targeting", () => {
     expect(result.gangil).toHaveLength(1);
     expect(result.gangil[0].date).toBe("2026-08-29");
     expect(page.goto).toHaveBeenCalledTimes(1);
+  });
+
+  it("merges Hanam provider results into the checked result", async () => {
+    checkHanamVenues.mockResolvedValueOnce({
+      "hanam-tennis-1": [
+        {
+          provider: "hanam",
+          venue: "hanam-tennis-1",
+          venueName: "하남 제1테니스장",
+          date: "2026-09-14",
+          time: "06:00~07:00",
+          startTime: "06:00",
+          endTime: "07:00",
+          available: false
+        }
+      ],
+      "misa-all": []
+    });
+
+    const result = await checkAllVenues({
+      watches: [
+        { id: "h1", venues: ["hanam-tennis-1"], date: "2026-09-14", times: ["06:00~07:00"], enabled: true },
+        { id: "m1", venues: ["misa-all"], date: "2026-09-14", times: ["06:00~08:00"], enabled: true }
+      ]
+    });
+
+    expect(result["hanam-tennis-1"]).toHaveLength(1);
+    expect(result["misa-all"]).toEqual([]);
+    expect(checkHanamVenues).toHaveBeenCalledWith(["hanam-tennis-1", "misa-all"], {
+      venueDates: {
+        "hanam-tennis-1": ["2026-09-14"],
+        "misa-all": ["2026-09-14"]
+      },
+      watches: expect.any(Array)
+    });
   });
 
   it("classifies a missing target date cell as a calendar date error instead of zero vacancies", async () => {
