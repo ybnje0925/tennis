@@ -25,6 +25,7 @@ export const config = {
   olympicUserPassword: process.env.OLYMPIC_USER_PASSWORD || "",
   songpaUserId: process.env.SONGPA_USER_ID || "",
   songpaUserPassword: process.env.SONGPA_USER_PASSWORD || "",
+  seoulOpenApiKey: process.env.SEOUL_OPEN_API_KEY || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
   telegramBotUsername: process.env.TELEGRAM_BOT_USERNAME || "",

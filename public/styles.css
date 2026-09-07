@@ -159,7 +159,8 @@ label {
 }
 
 input[type="date"],
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   height: 44px;
   padding: 0 12px;
@@ -380,6 +381,89 @@ button.primary {
   color: #617064;
 }
 
+.seoul-catalog {
+  display: grid;
+  gap: 14px;
+}
+
+.catalog-note,
+#seoulCatalogStatus {
+  margin: 0;
+  color: #7a6551;
+  font-size: 13px;
+}
+
+.catalog-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.catalog-summary div {
+  min-height: 62px;
+  padding: 10px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #fbfcfb;
+}
+
+.catalog-summary span {
+  display: block;
+  margin-bottom: 6px;
+  color: #617064;
+  font-size: 13px;
+}
+
+.catalog-summary strong {
+  font-size: 18px;
+}
+
+.catalog-filters {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 80px;
+  gap: 10px;
+  align-items: end;
+}
+
+.seoul-place-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.seoul-place {
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #fbfcfb;
+}
+
+.seoul-place summary {
+  min-height: 42px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.seoul-service-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.seoul-service {
+  padding: 10px;
+  border: 1px solid #edf2ec;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.seoul-service strong,
+.seoul-service p {
+  display: block;
+  margin: 0 0 6px;
+}
+
 .hidden {
   display: none;
 }
@@ -398,4 +482,8 @@ button.primary {
     grid-template-columns: 1fr;
   }
 
+  .catalog-summary,
+  .catalog-filters {
+    grid-template-columns: 1fr;
+  }
 }

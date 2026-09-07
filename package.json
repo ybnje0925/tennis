@@ -11,6 +11,7 @@
     "diagnose": "node src/diagnose.js",
     "diagnose:headless": "node src/headlessDiagnose.js",
     "diagnose:olympic": "node src/diagnoseOlympic.js",
+    "diagnose:seoul": "node src/diagnoseSeoul.js",
     "diagnose:songpa": "node src/diagnoseSongpa.js",
     "create-invite": "node src/createInvite.js",
     "disable-user": "node src/disableUser.js",

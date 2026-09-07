@@ -36,6 +36,12 @@ const reservationLinks = {
 };
 const venueGroupsEl = document.querySelector("#venueGroups");
 const venueSelectionHelpEl = document.querySelector("#venueSelectionHelp");
+const seoulCatalogForm = document.querySelector("#seoulCatalogForm");
+const seoulAreaFilterEl = document.querySelector("#seoulAreaFilter");
+const seoulPlaceCountEl = document.querySelector("#seoulPlaceCount");
+const seoulServiceCountEl = document.querySelector("#seoulServiceCount");
+const seoulCatalogStatusEl = document.querySelector("#seoulCatalogStatus");
+const seoulPlacesEl = document.querySelector("#seoulPlaces");
 let gangdongTimeSlots = [];
 let olympicTimeSlots = [];
 let oneHourTimeSlots = [];
@@ -45,6 +51,7 @@ let venueNames = {};
 let venuePublicUrls = {};
 let providerPublicUrls = {};
 let currentUser = null;
+let seoulAreas = [];
 
 async function request(path, options) {
   const response = await fetch(path, {
@@ -178,6 +185,113 @@ async function loadStatus() {
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
   renderLogs(status);
   buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
+}
+
+async function loadSeoulCatalog(filters = {}) {
+  seoulCatalogStatusEl.textContent = "서울시 catalog 조회 중...";
+  const params = new URLSearchParams();
+  if (filters.area) params.set("area", filters.area);
+  if (filters.q) params.set("q", filters.q);
+  const catalog = await request(`/api/seoul/tennis-services${params.size ? `?${params}` : ""}`);
+  seoulPlaceCountEl.textContent = `${catalog.uniquePlaceCount}곳`;
+  seoulServiceCountEl.textContent = `${catalog.totalServiceCount}건`;
+  seoulCatalogStatusEl.textContent = catalog.stale
+    ? "서울시 API 오류로 이전 데이터를 표시 중입니다."
+    : `${catalog.cached ? "cache" : "fresh"} · ${formatDateTime(catalog.fetchedAt)}`;
+  updateSeoulAreaOptions(catalog);
+  renderSeoulPlaces(catalog.places || []);
+}
+
+function updateSeoulAreaOptions(catalog) {
+  const selected = seoulAreaFilterEl.value;
+  const nextAreas = Array.from(new Set((catalog.places || []).map((place) => place.areaName).filter(Boolean))).sort((a, b) => a.localeCompare(b, "ko"));
+  if (seoulAreas.join("|") === nextAreas.join("|")) return;
+  seoulAreas = nextAreas;
+  seoulAreaFilterEl.innerHTML = `<option value="">전체</option>${seoulAreas.map((area) => `<option value="${escapeHtml(area)}">${escapeHtml(area)}</option>`).join("")}`;
+  seoulAreaFilterEl.value = seoulAreas.includes(selected) ? selected : "";
+}
+
+function renderSeoulPlaces(places) {
+  seoulPlacesEl.innerHTML = "";
+  if (places.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "표시할 서울시 테니스 장소가 없습니다.";
+    seoulPlacesEl.append(empty);
+    return;
+  }
+
+  for (const place of places.slice(0, 60)) {
+    const entry = document.createElement("details");
+    entry.className = "seoul-place";
+    const summary = document.createElement("summary");
+    summary.textContent = `[${place.areaName || "지역 미상"}] ${place.placeName || "장소 미상"} · 서비스 ${place.serviceCount}건`;
+    entry.append(summary);
+
+    const list = document.createElement("div");
+    list.className = "seoul-service-list";
+    for (const service of place.services || []) {
+      list.append(createSeoulService(service));
+    }
+    entry.append(list);
+    seoulPlacesEl.append(entry);
+  }
+
+  if (places.length > 60) {
+    const more = document.createElement("p");
+    more.className = "empty";
+    more.textContent = `검색 결과가 많아 60곳만 표시합니다. 자치구나 장소명으로 좁혀보세요.`;
+    seoulPlacesEl.append(more);
+  }
+}
+
+function createSeoulService(service) {
+  const article = document.createElement("article");
+  article.className = "seoul-service";
+  const title = document.createElement("strong");
+  title.textContent = service.serviceName || "-";
+  const status = document.createElement("p");
+  status.textContent = `접수상태: ${service.status || "-"}`;
+  const servicePeriod = document.createElement("p");
+  servicePeriod.textContent = `이용기간: ${formatPeriod(service.serviceOpenAt, service.serviceCloseAt)}`;
+  const receptionPeriod = document.createElement("p");
+  receptionPeriod.textContent = `접수기간: ${formatPeriod(service.receptionOpenAt, service.receptionCloseAt)}`;
+  article.append(title, status, servicePeriod, receptionPeriod);
+  if (isPublicHttpUrl(service.reservationUrl)) {
+    const link = document.createElement("a");
+    link.href = service.reservationUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.className = "reservation-link";
+    link.textContent = "예약페이지";
+    article.append(link);
+  }
+  return article;
+}
+
+function formatPeriod(start, end) {
+  if (!start && !end) return "-";
+  return `${formatDateOnly(start)} ~ ${formatDateOnly(end)}`;
+}
+
+function formatDateOnly(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    timeZone: "Asia/Seoul"
+  }).format(date);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function renderLogs(status) {
@@ -535,6 +649,19 @@ document.querySelector("#fakeAvailability").addEventListener("click", async () =
   }
 });
 
+seoulCatalogForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(seoulCatalogForm);
+  try {
+    await loadSeoulCatalog({
+      area: data.get("area"),
+      q: data.get("q")
+    });
+  } catch (error) {
+    seoulCatalogStatusEl.textContent = error.message;
+  }
+});
+
 function updateOlympicFields() {
   updateVenueSelection();
 }
@@ -546,6 +673,9 @@ async function bootApp() {
   updateVenueSelection();
   await loadWatches();
   await loadStatus();
+  await loadSeoulCatalog().catch((error) => {
+    seoulCatalogStatusEl.textContent = error.message;
+  });
 }
 
 await bootApp();

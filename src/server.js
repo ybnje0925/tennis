@@ -32,6 +32,7 @@ import {
 } from "./monitor.js";
 import { validateVenueSelection } from "./venueRules.js";
 import { buildInfo } from "./buildInfo.js";
+import { fetchSeoulTennisServices, filterSeoulTennisCatalog } from "./providers/seoulPublicProvider.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -215,6 +216,19 @@ app.get("/api/status", requireUser, async (req, res, next) => {
       return buildStatusPayload(state, req.user.id, now);
     });
     res.json(payload);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/seoul/tennis-services", requireUser, async (req, res, next) => {
+  try {
+    const catalog = await fetchSeoulTennisServices();
+    res.json(filterSeoulTennisCatalog(catalog, {
+      q: req.query.q,
+      area: req.query.area,
+      status: req.query.status
+    }));
   } catch (error) {
     next(error);
   }
