@@ -1,9 +1,9 @@
-import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config, assertOlympicLoginConfig } from "../config.js";
 import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
-import { createProviderTimer, withTimeout } from "../providerTiming.js";
+import { createProviderTimer } from "../providerTiming.js";
+import { launchPersistentContext } from "../playwrightLauncher.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
@@ -47,15 +47,18 @@ export async function openOlympicSession(options = {}) {
 
 async function createOlympicSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
-  const context = await withTimeout(
-    chromium.launchPersistentContext(SESSION_DIR, {
+  const context = await launchPersistentContext(
+    SESSION_DIR,
+    {
       headless: options.headless ?? config.headless,
       viewport: { width: 1365, height: 900 },
       locale: "ko-KR"
-    }),
-    BROWSER_LAUNCH_TIMEOUT_MS,
-    "올림픽",
-    "브라우저 실행"
+    },
+    {
+      timeoutMs: BROWSER_LAUNCH_TIMEOUT_MS,
+      providerLabel: "올림픽",
+      stepLabel: "브라우저 실행"
+    }
   );
   const page = context.pages()[0] || await context.newPage();
   page.setDefaultTimeout(20_000);

@@ -83,6 +83,7 @@ export function isRetryableDiagnostic(error) {
 function inferErrorType(error, message) {
   if (error?.code === "PROVIDER_TIMEOUT" || error?.name === "ProviderTimeoutError") return "TIMEOUT";
   if (/timeout|Timeout/i.test(message)) return "TIMEOUT";
+  if (/EAGAIN|Failed to launch|spawn .*chrome|browserType\.launch|Chromium/i.test(message)) return "BROWSER_LAUNCH_FAILED";
   if (/net::ERR_NAME_NOT_RESOLVED|ENOTFOUND|DNS/i.test(message)) return "NETWORK_DNS";
   if (/net::ERR_CERT|TLS|certificate/i.test(message)) return "NETWORK_TLS";
   if (/net::ERR|ECONNRESET|ECONNREFUSED|fetch failed|network/i.test(message)) return "NETWORK_ERROR";
