@@ -1189,7 +1189,7 @@ describe("buildCycleSummary", () => {
 
     expect(summary).toContain("조회실패 | 강동 0/2 성공 · 2 실패");
     expect(summary).not.toContain("빈자리 0건");
-    expect(summary).toContain("↳ 강일테니스장: CALENDAR_DATE_NOT_FOUND / 2026-09-05");
-    expect(summary).toContain("↳ 명일테니스장: LOGIN_OR_PROTECTION_PAGE / 2026-09-05");
+    expect(summary).toContain("↳ 강일테니스장: 날짜 선택 문제 / 2026-09-05");
+    expect(summary).toContain("↳ 명일테니스장: 로그인/접근 보호 문제 / 2026-09-05");
   });
 });

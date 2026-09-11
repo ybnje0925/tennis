@@ -359,13 +359,14 @@ function renderErrorDetails(errors) {
   section.className = "log-detail-block";
   section.append(logDetailTitle("문제 상세"));
   errors.forEach((error) => {
+    const guide = errorGuide(error);
     const row = document.createElement("dl");
     row.className = "log-detail-grid";
     appendDetail(row, "시설", error.venueName || error.providerName || error.provider || "-");
     appendDetail(row, "날짜", error.targetDate || "-");
-    appendDetail(row, "단계", error.stage || "-");
-    appendDetail(row, "유형", error.type || "UNKNOWN");
-    appendDetail(row, "원인", error.message || "-");
+    appendDetail(row, "분류", guide.category);
+    appendDetail(row, "설명", guide.summary);
+    appendDetail(row, "다음 조치", guide.action);
     section.append(row);
   });
   return section;
@@ -429,10 +430,90 @@ function fallbackProviderErrors(line, providers) {
       provider: providerId,
       providerName: label,
       message: providers[providerId].lastError,
-      type: "LAST_PROVIDER_ERROR",
+      type: inferPublicErrorType(providers[providerId].lastError),
       targetDate: null,
       stage: null
     }));
+}
+
+function errorGuide(error) {
+  if (error.userCategory || error.userMessage || error.userAction) {
+    return {
+      category: error.userCategory || "조회 문제",
+      summary: error.userMessage || "예약현황 조회 중 문제가 발생했습니다.",
+      action: error.userAction || "다음 조회 때 다시 시도됩니다. 반복되면 상태를 확인해 주세요."
+    };
+  }
+  return guideForType(error.type, error.message);
+}
+
+function guideForType(type, message = "") {
+  const text = String(message || "");
+  if (type === "BROWSER_LAUNCH_FAILED") {
+    const summary = /EAGAIN|resource|temporar/i.test(text)
+      ? "서버 자원이 잠시 부족해서 예약 사이트를 확인할 브라우저를 새로 열지 못했습니다."
+      : /SIGTRAP|Target page, context or browser has been closed|browser has been closed/i.test(text)
+        ? "예약 사이트를 확인하려고 브라우저를 켰지만, 시작 직후 브라우저가 종료됐습니다."
+        : "예약 사이트를 확인할 브라우저를 시작하지 못했습니다.";
+    return {
+      category: "브라우저 시작 문제",
+      summary,
+      action: "대부분 일시적인 문제라 다음 조회 때 다시 시도됩니다. 반복되면 서버 재시작이나 메모리/프로세스 사용량 확인이 필요합니다."
+    };
+  }
+  if (type === "TIMEOUT") {
+    return {
+      category: "응답 지연",
+      summary: "예약 사이트가 제한 시간 안에 응답하지 않았습니다.",
+      action: "잠시 후 자동으로 다시 조회됩니다. 같은 시설에서 반복되면 해당 사이트가 느리거나 점검 중일 수 있습니다."
+    };
+  }
+  if (["NETWORK_DNS", "NETWORK_TLS", "NETWORK_ERROR"].includes(type)) {
+    return {
+      category: "네트워크 문제",
+      summary: "예약 사이트에 연결하는 중 문제가 났습니다.",
+      action: "대부분 일시적인 연결 문제라 다음 조회 때 다시 시도됩니다."
+    };
+  }
+  if (type === "LOGIN_OR_PROTECTION_PAGE") {
+    return {
+      category: "로그인/접근 보호 문제",
+      summary: "예약현황 대신 로그인 화면이나 접근 보호 화면이 나타났습니다.",
+      action: "계정 로그인 상태, 중복 로그인, 사이트 차단 안내가 있는지 확인이 필요합니다."
+    };
+  }
+  if (type === "CALENDAR_DATE_NOT_FOUND") {
+    return {
+      category: "날짜 선택 문제",
+      summary: "예약 달력에서 요청한 날짜를 찾지 못했습니다.",
+      action: "예약 가능 기간이 아직 열리지 않았거나 사이트 화면 구성이 바뀌었을 수 있습니다."
+    };
+  }
+  if (type === "PARSE_FAILED") {
+    return {
+      category: "화면 읽기 문제",
+      summary: "예약 사이트 화면은 열렸지만 빈자리 정보를 읽어내지 못했습니다.",
+      action: "사이트 화면 구성이 바뀌었을 가능성이 있습니다. 반복되면 파서 수정이 필요합니다."
+    };
+  }
+  return {
+    category: "알 수 없는 조회 문제",
+    summary: "예약현황 조회 중 예상하지 못한 문제가 발생했습니다.",
+    action: "다음 조회 때 다시 시도됩니다. 반복되면 기술 로그를 확인해 원인을 좁혀야 합니다."
+  };
+}
+
+function inferPublicErrorType(message = "") {
+  const text = String(message || "");
+  if (/timeout|Timeout/i.test(text)) return "TIMEOUT";
+  if (/EAGAIN|Failed to launch|spawn .*chrome|browserType\.launch|Chromium|SIGTRAP|browser has been closed/i.test(text)) return "BROWSER_LAUNCH_FAILED";
+  if (/net::ERR_NAME_NOT_RESOLVED|ENOTFOUND|DNS/i.test(text)) return "NETWORK_DNS";
+  if (/net::ERR_CERT|TLS|certificate/i.test(text)) return "NETWORK_TLS";
+  if (/net::ERR|ECONNRESET|ECONNREFUSED|fetch failed|network/i.test(text)) return "NETWORK_ERROR";
+  if (/CALENDAR_DATE_NOT_FOUND/.test(text)) return "CALENDAR_DATE_NOT_FOUND";
+  if (/login|로그인|보호|차단|WebGate|비정상/i.test(text)) return "LOGIN_OR_PROTECTION_PAGE";
+  if (/달력 연월|year-month|날짜 이동|selector|DOM|parse|파싱/i.test(text)) return "PARSE_FAILED";
+  return "UNKNOWN_ERROR";
 }
 
 function shortCommit(value) {

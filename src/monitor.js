@@ -882,6 +882,9 @@ function safeDiagnostic(error) {
     stage: error.stage || null,
     type: error.type || null,
     message: error.message || "",
+    userCategory: error.userCategory || null,
+    userMessage: error.userMessage || null,
+    userAction: error.userAction || null,
     retryable: Boolean(error.retryable)
   };
 }
@@ -963,7 +966,7 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
   }
   const detailLines = checkErrors
     .filter((error) => activeProviders.has(error.provider))
-    .map((error) => `↳ ${error.venueName || VENUES[error.venueId]?.name || providerLabel(error.provider)}: ${error.type || shortReason(error.message)}${error.targetDate ? ` / ${error.targetDate}` : ""}`);
+    .map((error) => `↳ ${error.venueName || VENUES[error.venueId]?.name || providerLabel(error.provider)}: ${publicReason(error)}${error.targetDate ? ` / ${error.targetDate}` : ""}`);
   const summary = parts.join(" | ");
   return detailLines.length > 0 ? [summary, ...detailLines].join("\n") : summary;
 }
@@ -1013,6 +1016,17 @@ function shortReason(message = "조회 실패") {
   if (/login|로그인/i.test(message)) return "로그인 실패";
   if (/중복|duplicate/i.test(message)) return "중복접속";
   return "조회 실패";
+}
+
+function publicReason(error) {
+  if (error.userCategory) return error.userCategory;
+  if (error.type === "BROWSER_LAUNCH_FAILED") return "브라우저 시작 문제";
+  if (error.type === "TIMEOUT") return "응답 지연";
+  if (error.type === "NETWORK_DNS" || error.type === "NETWORK_TLS" || error.type === "NETWORK_ERROR") return "네트워크 문제";
+  if (error.type === "LOGIN_OR_PROTECTION_PAGE") return "로그인/접근 보호 문제";
+  if (error.type === "CALENDAR_DATE_NOT_FOUND") return "날짜 선택 문제";
+  if (error.type === "PARSE_FAILED") return "화면 읽기 문제";
+  return shortReason(error.message);
 }
 
 function successfulVenueIds(targetVenueIds, checked) {
