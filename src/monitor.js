@@ -140,11 +140,25 @@ export function addLog(state, message, date = new Date(), details = null) {
     timeZone: SERVICE_TIME_ZONE
   }).format(date);
   const line = `[${time}] ${message}`;
+  state.system.logDetails = alignLogDetails(state.system.logs, state.system.logDetails || []);
   state.system.logs.push(line);
   state.system.logs = state.system.logs.slice(-30);
   state.system.logDetails ||= [];
   state.system.logDetails.push(details ? { line, ...details } : null);
   state.system.logDetails = state.system.logDetails.slice(-state.system.logs.length);
+}
+
+function alignLogDetails(logs = [], details = []) {
+  const next = Array(logs.length).fill(null);
+  const unused = [...details];
+  logs.forEach((line, index) => {
+    const matchIndex = unused.findIndex((detail) => detail?.line === line);
+    if (matchIndex >= 0) {
+      next[index] = unused[matchIndex];
+      unused.splice(matchIndex, 1);
+    }
+  });
+  return next;
 }
 
 export function activeProviderVenueIds(activeVenueIds) {
@@ -414,7 +428,8 @@ function mergeProviderSuccess(state, {
   activeProviderIds,
   skippedProviders,
   alertCount,
-  checkErrors = []
+  checkErrors = [],
+  notificationErrors = []
 }) {
   for (const providerId of providerIds) {
     const stats = providerCheckStats(providerId, targetVenueIds, checked, checkErrors);
@@ -451,8 +466,9 @@ function mergeProviderSuccess(state, {
     activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders),
     skippedProviders,
     vacancyCount,
-    alertCount
-  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt }));
+    alertCount,
+    alertFailureCount: notificationErrors.length
+  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt, notificationErrors }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -671,6 +687,7 @@ export async function runCheckCycle({
   }
 
   let alertCount = 0;
+  const notificationErrors = [];
   for (const group of notificationGroups(notificationPlan.notifications)) {
     try {
       const user = notificationPlan.usersById[group.watch.userId];
@@ -699,6 +716,13 @@ export async function runCheckCycle({
       alertCount += group.notifications.length;
     } catch (error) {
       errors.push(error.message);
+      notificationErrors.push({
+        type: "TELEGRAM_SEND_FAILED",
+        message: error.message,
+        watchId: group.watch.id,
+        userId: group.watch.userId,
+        count: group.notifications.length
+      });
       console.error(`Telegram 알림 발송 실패: ${error.message}`);
     }
   }
@@ -717,7 +741,8 @@ export async function runCheckCycle({
         activeProviderIds: Array.from(latestContext.activeProviders.keys()),
         skippedProviders,
         alertCount,
-        checkErrors
+        checkErrors,
+        notificationErrors
       });
     });
   } catch (error) {
@@ -841,7 +866,7 @@ function addSkipLogs(state, skippedProviders, now) {
   }
 }
 
-function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], checkedAt }) {
+function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {
   const errors = (checked?.[CHECK_META]?.errors || []).map(safeDiagnostic);
   return {
     kind: errors.length > 0 ? "provider-error" : "provider-check",
@@ -851,6 +876,13 @@ function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], check
       provider,
       providerName: providerLabel(provider),
       reason
+    })),
+    notificationErrors: notificationErrors.map((error) => ({
+      type: error.type || "NOTIFICATION_FAILED",
+      message: error.message || "",
+      watchId: error.watchId || null,
+      userId: error.userId || null,
+      count: error.count || 0
     })),
     errors
   };
@@ -940,7 +972,7 @@ function updateAttemptedProviderSchedule(state, venueIds, checkedAt) {
   }
 }
 
-export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount }) {
+export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount, alertFailureCount = 0 }) {
   const activeProviders = providerTargets(activeVenueIds);
   const checkErrors = checked?.[CHECK_META]?.errors || [];
   const allFailed = Array.from(activeProviders.entries()).every(([providerId, venueIds]) => {
@@ -961,7 +993,10 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
 
   if (!allFailed) {
     const tail = [`빈자리 ${vacancyCount}건`];
-    if (vacancyCount > 0) tail.push(`알림 ${alertCount}건`);
+    if (vacancyCount > 0) {
+      tail.push(`알림 ${alertCount}건`);
+      if (alertFailureCount > 0) tail.push(`발송실패 ${alertFailureCount}건`);
+    }
     parts.push(tail.join(" → "));
   }
   const detailLines = checkErrors

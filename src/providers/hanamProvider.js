@@ -32,14 +32,61 @@ export function hanamKeyFor(item) {
 
 export function filterHanamSlotsByWatch(slots, watch) {
   const venueIds = new Set(watch.venues || []);
-  const times = new Set((watch.times || []).map((time) => normalizeTimeSlot(time) || time));
-  return slots.filter((slot) => (
+  const requestedTimes = (watch.times || []).map((time) => normalizeTimeSlot(time) || time).filter(Boolean);
+  const oneHourTimes = new Set(requestedTimes.filter((time) => slotMinutes(time) <= 60));
+  const longerTimes = requestedTimes.filter((time) => slotMinutes(time) > 60);
+  const eligibleSlots = slots.filter((slot) => (
     slot.provider === "hanam" &&
     slot.available &&
     slot.date === normalizeDate(watch.date) &&
-    times.has(slot.time) &&
     (venueIds.has(slot.venue) || (venueIds.has("misa-all") && slot.facilityGroup === "misa"))
   ));
+
+  const directMatches = eligibleSlots.filter((slot) => oneHourTimes.has(slot.time));
+  const continuousMatches = longerTimes.flatMap((time) => findContinuousHanamSlots(eligibleSlots, time));
+  return uniqueSlots([...directMatches, ...continuousMatches]);
+}
+
+function findContinuousHanamSlots(slots, requestedTime) {
+  const [startTime, endTime] = requestedTime.split("~");
+  const targetMinutes = minutesBetween(startTime, endTime);
+  if (!Number.isFinite(targetMinutes) || targetMinutes <= 60) return [];
+
+  const groups = new Map();
+  for (const slot of slots) {
+    if (!slot.courtNo) continue;
+    const key = [slot.venue, slot.date, slot.courtNo].join("|");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(slot);
+  }
+
+  const matches = [];
+  for (const group of groups.values()) {
+    const byStart = new Map(group.map((slot) => [slot.startTime, slot]));
+    const chain = [];
+    let cursor = startTime;
+    while (cursor < endTime) {
+      const slot = byStart.get(cursor);
+      if (!slot || !slot.available || slot.endTime <= slot.startTime) {
+        chain.length = 0;
+        break;
+      }
+      chain.push(slot);
+      cursor = slot.endTime;
+    }
+    if (cursor !== endTime || chain.length === 0) continue;
+    const first = chain[0];
+    matches.push({
+      ...first,
+      startTime,
+      endTime,
+      time: requestedTime,
+      durationMinutes: targetMinutes,
+      sourceSlots: chain.map((slot) => slot.time),
+      rawStatus: "continuous-available"
+    });
+  }
+  return matches;
 }
 
 export function hanamVenueIdsFromWatches(watches) {
@@ -120,9 +167,9 @@ async function checkHanamSportVenue(venueId, options) {
     if (slots.length === 0 && isHanamDateOpen(status)) {
       throw parseError("TIME_SLOTS_MISSING", venueId, date, "하남 달력은 대관가능인데 시간표 응답이 비어 있습니다.");
     }
-    const slotsByTime = collapseFacilitySlotsByTime(slots);
     for (const time of requestedTimes) {
-      results.push(slotsByTime.get(time) || unavailableItem(venueId, date, time));
+      const matchingSlots = slots.filter((slot) => slot.time === time);
+      results.push(...(matchingSlots.length > 0 ? matchingSlots : [unavailableItem(venueId, date, time)]));
     }
     logProviderResult("HANAM", venueId, date, requestedTimes, results.filter((item) => item.venue === venueId && item.date === date && item.available).length, "SUCCESS");
   }
@@ -177,6 +224,11 @@ export function parseHanamDateStatusResponse(json, date) {
 export function parseHanamTimeResponse(json, venueId, date) {
   if (!json || typeof json !== "object") throw parseError("PARSE_FAILED", venueId, date, "하남 시간표 응답이 JSON 객체가 아닙니다.");
   if (json.rstate === "9") throw parseError("HTTP_BLOCKED_OR_NOT_FOUND", venueId, date, json.error || "하남 시간표 접근이 거부되었습니다.");
+  const responseDate = normalizeDate(json.r_day || json.rday || json.rdate);
+  if (responseDate && responseDate !== date) throw parseError("CALENDAR_DATE_MISMATCH", venueId, date, `하남 시간표 응답 날짜가 요청 날짜와 다릅니다: ${responseDate}`);
+  if (json.Place_Code && String(json.Place_Code) !== String(VENUES[venueId].placeCode)) {
+    throw parseError("VENUE_MISMATCH", venueId, date, `하남 시간표 응답 시설이 요청 시설과 다릅니다: ${json.Place_Code}`);
+  }
   if (!Object.prototype.hasOwnProperty.call(json, "play_name")) throw parseError("PARSE_FAILED", venueId, date, "하남 시간표 응답에 play_name이 없습니다.");
 
   const raw = parseMaybeJson(json.play_name);
@@ -311,7 +363,7 @@ export function parseMisaReservationHtml(html, { venueId, date, courtNo }) {
 }
 
 function parseSlotHtml(html) {
-  const chunks = String(html || "").split(/<\/(?:li|tr|p|div)>/i);
+  const chunks = slotHtmlChunks(html);
   const slots = [];
   for (const chunk of chunks) {
     const text = stripTags(chunk);
@@ -319,29 +371,21 @@ function parseSlotHtml(html) {
     if (!time) continue;
     const [startTime, endTime] = time.split("~");
     const markup = `${text} ${chunk}`;
-    const unavailable = /예약완료|대관마감|마감|불가|disabled|disable|nochk|r_end/i.test(markup);
-    const selectableInput = /name=['"]ct_chk\[\]/i.test(chunk) && !unavailable;
+    const checkboxInput = /<input\b[^>]*type=['"]checkbox['"][^>]*name=['"]ct_chk\[\]/i.test(chunk);
+    const disabledInput = /<input\b[^>]*(?:disabled\b|type=['"]hidden['"])[^>]*name=['"]ct_chk\[\]/i.test(chunk);
+    const unavailable = disabledInput || /예약완료|대관마감|마감|불가|disabled|disable|nochk|r_end/i.test(markup);
+    const selectableInput = checkboxInput && !unavailable;
     const available = (/예약가능|대관가능|신청가능|예약하기|가능/i.test(markup) || selectableInput) && !unavailable;
     slots.push({ startTime, endTime, time, available, rawStatus: text });
   }
   return slots;
 }
 
-function collapseFacilitySlotsByTime(slots) {
-  const byTime = new Map();
-  for (const slot of slots) {
-    const facilitySlot = {
-      ...slot,
-      courtNo: undefined,
-      courtName: undefined,
-      rawCourtNo: slot.courtNo
-    };
-    const previous = byTime.get(slot.time);
-    if (!previous || (!previous.available && facilitySlot.available)) {
-      byTime.set(slot.time, facilitySlot);
-    }
-  }
-  return byTime;
+function slotHtmlChunks(html) {
+  const text = String(html || "");
+  const blocks = text.match(/<div\b[^>]*class=['"][^'"]*\bchk_d\b[^'"]*['"][^>]*>[\s\S]*?<\/div>/gi);
+  if (blocks?.length) return blocks;
+  return text.split(/<\/(?:li|tr|p|div)>/i);
 }
 
 function watchDatesForVenue(watches = [], venueId) {
@@ -415,6 +459,13 @@ function minutesBetween(startTime, endTime) {
   const [sh, sm] = startTime.split(":").map(Number);
   const [eh, em] = endTime.split(":").map(Number);
   return (eh * 60 + em) - (sh * 60 + sm);
+}
+
+function slotMinutes(time) {
+  const normalized = normalizeTimeSlot(time);
+  if (!normalized) return 0;
+  const [startTime, endTime] = normalized.split("~");
+  return minutesBetween(startTime, endTime);
 }
 
 function uniqueSlots(slots) {

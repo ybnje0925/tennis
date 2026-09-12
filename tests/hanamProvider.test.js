@@ -81,6 +81,111 @@ describe("Hanam sport parser", () => {
   it("throws when the time response shape changes", () => {
     expect(() => parseHanamTimeResponse({ ok: true }, "hanam-tennis-1", "2026-09-10")).toThrow(/play_name/);
   });
+
+  it("distinguishes active checkboxes, disabled checkboxes, and X slots", () => {
+    const slots = parseHanamTimeResponse({
+      r_day: "2026-09-14",
+      Place_Code: "024",
+      play_name: JSON.stringify([{
+        play_name: "1면",
+        htmlx: `
+          <div class='chk_d'><ul><li class='check_box'><input type='checkbox' name='ct_chk[]' id='select_1' /><label for='select_1'></label></li><li class='chk_t'>08:00 ~ 09:00</li></ul></div>
+          <div class='chk_d'><ul><li class='check_box'><input type='checkbox' name='ct_chk[]' id='select_2' disabled /><label for='select_2'></label></li><li class='chk_t'>09:00 ~ 10:00</li></ul></div>
+          <div class='chk_d nochk'><ul><li class='check_box'><span class='rx'>x</span><input type='hidden' name='ct_chk[]' disabled /></li><li class='chk_t r_end'>10:00 ~ 11:00<br />예약자</li></ul></div>
+        `
+      }])
+    }, "hanam-tennis-1", "2026-09-14");
+
+    expect(slots.map(({ time, available }) => [time, available])).toEqual([
+      ["08:00~09:00", true],
+      ["09:00~10:00", false],
+      ["10:00~11:00", false]
+    ]);
+  });
+
+  it("keeps court-specific time mapping for off-screen court columns", () => {
+    const slots = parseHanamTimeResponse({
+      r_day: "2026-09-14",
+      Place_Code: "024",
+      play_name: JSON.stringify([
+        { play_name: "1면", htmlx: "<div class='chk_d'><ul><li><input type='checkbox' name='ct_chk[]' /></li><li>08:00 ~ 09:00</li></ul></div>" },
+        { play_name: "3면", htmlx: "<div class='chk_d'><ul><li><input type='checkbox' name='ct_chk[]' /></li><li>12:00 ~ 13:00</li></ul></div>" }
+      ])
+    }, "hanam-tennis-1", "2026-09-14");
+
+    expect(slots.map((slot) => `${slot.courtNo}:${slot.time}`)).toEqual(["1:08:00~09:00", "3:12:00~13:00"]);
+  });
+
+  it("finds continuous two-hour availability on the same court only", () => {
+    const slots = parseHanamTimeResponse({
+      r_day: "2026-09-14",
+      Place_Code: "024",
+      play_name: JSON.stringify([
+        {
+          play_name: "1면",
+          htmlx: `
+            <div><input type='checkbox' name='ct_chk[]' />08:00 ~ 09:00</div>
+            <div><input type='checkbox' name='ct_chk[]' />09:00 ~ 10:00</div>
+            <div class='nochk'><input type='hidden' name='ct_chk[]' disabled />10:00 ~ 11:00</div>
+            <div><input type='checkbox' name='ct_chk[]' />14:00 ~ 15:00</div>
+            <div><input type='checkbox' name='ct_chk[]' />15:00 ~ 16:00</div>
+          `
+        },
+        {
+          play_name: "2면",
+          htmlx: `
+            <div><input type='checkbox' name='ct_chk[]' />09:00 ~ 10:00</div>
+            <div><input type='checkbox' name='ct_chk[]' />11:00 ~ 12:00</div>
+          `
+        }
+      ])
+    }, "hanam-tennis-1", "2026-09-14");
+
+    const oneHour = filterHanamSlotsByWatch(slots, {
+      venues: ["hanam-tennis-1"],
+      date: "2026-09-14",
+      times: ["08:00~09:00", "09:00~10:00", "14:00~15:00", "15:00~16:00"]
+    });
+    const twoHour = filterHanamSlotsByWatch(slots, {
+      venues: ["hanam-tennis-1"],
+      date: "2026-09-14",
+      times: ["08:00~10:00", "09:00~11:00", "14:00~16:00"]
+    });
+
+    expect(oneHour.map((slot) => `${slot.courtNo}:${slot.time}`)).toEqual([
+      "1:08:00~09:00",
+      "1:09:00~10:00",
+      "2:09:00~10:00",
+      "1:14:00~15:00",
+      "1:15:00~16:00"
+    ]);
+    expect(twoHour.map((slot) => `${slot.courtNo}:${slot.time}`)).toEqual(["1:08:00~10:00", "1:14:00~16:00"]);
+  });
+
+  it("does not combine times across different courts", () => {
+    const slots = parseHanamTimeResponse({
+      r_day: "2026-09-14",
+      Place_Code: "024",
+      play_name: JSON.stringify([
+        { play_name: "1면", htmlx: "<div><input type='checkbox' name='ct_chk[]' />08:00 ~ 09:00</div>" },
+        { play_name: "2면", htmlx: "<div><input type='checkbox' name='ct_chk[]' />09:00 ~ 10:00</div>" }
+      ])
+    }, "hanam-tennis-1", "2026-09-14");
+
+    expect(filterHanamSlotsByWatch(slots, {
+      venues: ["hanam-tennis-1"],
+      date: "2026-09-14",
+      times: ["08:00~10:00"]
+    })).toEqual([]);
+  });
+
+  it("throws when the response date does not match the requested date", () => {
+    expect(() => parseHanamTimeResponse({
+      r_day: "2026-09-15",
+      Place_Code: "024",
+      play_name: "[]"
+    }, "hanam-tennis-1", "2026-09-14")).toThrow(/응답 날짜/);
+  });
 });
 
 describe("Misa parser", () => {

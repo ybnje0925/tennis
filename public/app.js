@@ -22,6 +22,12 @@ const logsEl = document.querySelector("#logs");
 const lastCheckedEl = document.querySelector("#lastChecked");
 const nextCheckEl = document.querySelector("#nextCheck");
 const buildInfoEl = document.querySelector("#buildInfo");
+const monitoringTitleEl = document.querySelector("#monitoringTitle");
+const monitoringDescriptionEl = document.querySelector("#monitoringDescription");
+const activeWatchCountEl = document.querySelector("#activeWatchCount");
+const connectedVenueCountEl = document.querySelector("#connectedVenueCount");
+const watchSummaryEl = document.querySelector("#watchSummary");
+const showWatchFormButton = document.querySelector("#showWatchForm");
 const gangilStatusEl = document.querySelector("#gangilStatus");
 const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
@@ -183,6 +189,11 @@ async function loadStatus() {
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
+  const activeWatchCount = Number(status.currentUserActiveWatchCount || 0);
+  monitoringTitleEl.textContent = activeWatchCount > 0 ? "모니터링 중" : "모니터링 대기 중";
+  monitoringDescriptionEl.textContent = activeWatchCount > 0
+    ? "선택한 시설의 잔여 코트를 주기적으로 확인하고 있어요."
+    : "알림 조건을 등록하면 5분 간격으로 빈자리를 확인해요.";
   renderLogs(status);
   buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
 }
@@ -307,9 +318,14 @@ function renderLogs(status) {
   }
 
   logs
-    .map((line, index) => ({ line, detail: details[index] || null }))
+    .map((line, index) => ({ line, detail: matchingLogDetail(line, details[index], details) }))
     .reverse()
     .forEach(({ line, detail }) => logsEl.append(createLogEntry(line, detail, status.providers || {})));
+}
+
+function matchingLogDetail(line, indexedDetail, details) {
+  if (indexedDetail?.line === line) return indexedDetail;
+  return details.find((detail) => detail?.line === line) || null;
 }
 
 function createLogEntry(line, detail, providers) {
@@ -317,7 +333,7 @@ function createLogEntry(line, detail, providers) {
   const summaryText = lines[0] || "-";
   const embeddedDetails = lines.slice(1);
   const fallbackErrors = fallbackProviderErrors(summaryText, providers);
-  const hasDetails = embeddedDetails.length > 0 || fallbackErrors.length > 0 || detail?.errors?.length || detail?.facilities?.length || detail?.skippedProviders?.length;
+  const hasDetails = embeddedDetails.length > 0 || fallbackErrors.length > 0 || detail?.errors?.length || detail?.facilities?.length || detail?.skippedProviders?.length || detail?.notificationErrors?.length;
 
   if (!hasDetails) {
     const row = document.createElement("div");
@@ -349,6 +365,7 @@ function createLogEntry(line, detail, providers) {
   if (errors.length > 0) body.append(renderErrorDetails(errors));
   if (detail?.facilities?.length) body.append(renderFacilityDetails(detail.facilities));
   if (detail?.skippedProviders?.length) body.append(renderSkippedProviderDetails(detail.skippedProviders));
+  if (detail?.notificationErrors?.length) body.append(renderNotificationErrorDetails(detail.notificationErrors));
 
   entry.append(body);
   return entry;
@@ -391,6 +408,22 @@ function renderSkippedProviderDetails(skippedProviders) {
   skippedProviders.forEach((provider) => {
     const row = document.createElement("p");
     row.textContent = `${provider.providerName || provider.provider}: ${provider.reason || "-"}`;
+    section.append(row);
+  });
+  return section;
+}
+
+function renderNotificationErrorDetails(errors) {
+  const section = document.createElement("section");
+  section.className = "log-detail-block";
+  section.append(logDetailTitle("알림 발송 문제"));
+  errors.forEach((error) => {
+    const row = document.createElement("dl");
+    row.className = "log-detail-grid";
+    appendDetail(row, "분류", "텔레그램 발송 실패");
+    appendDetail(row, "건수", `${error.count || 0}건`);
+    appendDetail(row, "설명", error.message || "-");
+    appendDetail(row, "다음 조치", "조회는 성공했지만 알림 발송이 실패했습니다. 다음 빈자리 감지 때 다시 발송을 시도합니다.");
     section.append(row);
   });
   return section;
@@ -523,6 +556,13 @@ function shortCommit(value) {
 
 async function loadWatches() {
   const watches = await request("/api/watches");
+  const activeWatches = watches.filter((watch) => watch.enabled !== false);
+  const connectedVenues = new Set(activeWatches.flatMap((watch) => watch.venues || []));
+  activeWatchCountEl.textContent = String(activeWatches.length);
+  connectedVenueCountEl.textContent = String(connectedVenues.size);
+  watchSummaryEl.textContent = activeWatches.length > 0
+    ? `${activeWatches.length}개가 활성화 중이에요.`
+    : "아직 활성화한 알림이 없어요.";
   if (watches.length === 0) {
     watchesEl.innerHTML = `<p class="empty">등록된 알림이 없어 현재 계정은 조회 대상이 아닙니다.</p>`;
     return;
@@ -530,16 +570,20 @@ async function loadWatches() {
   watchesEl.innerHTML = sortWatchesByReservationTime(watches)
     .map((watch) => {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
-      const olympicDetail = watch.provider === "olympic"
-        ? `<div>${watch.times.join("<br />")}</div>`
-        : `<div>${watch.times.join("<br />")}</div>`;
+      const date = formatWatchDate(watch.date);
+      const timeLabels = watch.times.map((time) => `<span>${time}</span>`).join("");
       return `
         <article class="watch ${watch.enabled === false ? "disabled" : ""}">
-          <div>
-            <strong>${venues}</strong>
-            <div>${formatDate(watch.date)}</div>
-            ${olympicDetail}
-            <div class="watch-state">${watch.enabled === true ? "감시 중" : "일시정지"}</div>
+          <div class="watch-main">
+            <div class="watch-date">
+              <strong>${date.day}</strong>
+              <span>${date.year}</span>
+            </div>
+            <div class="watch-details">
+              <strong>${venues}</strong>
+              <div class="watch-meta">${timeLabels}</div>
+              <div class="watch-state">${watch.enabled === true ? "알림 켜짐" : "일시정지"}</div>
+            </div>
           </div>
           <div class="watch-actions">
             <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}">
@@ -551,6 +595,15 @@ async function loadWatches() {
       `;
     })
     .join("");
+}
+
+function formatWatchDate(value) {
+  const date = new Date(`${value}T00:00:00+09:00`);
+  if (Number.isNaN(date.getTime())) return { day: formatDate(value), year: "" };
+  const weekday = new Intl.DateTimeFormat("ko-KR", { weekday: "short", timeZone: "Asia/Seoul" }).format(date);
+  const monthDay = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", timeZone: "Asia/Seoul" }).format(date).replace(/\s/g, "");
+  const year = new Intl.DateTimeFormat("ko-KR", { year: "numeric", timeZone: "Asia/Seoul" }).format(date);
+  return { day: `${monthDay} (${weekday})`, year };
 }
 
 form.addEventListener("submit", async (event) => {
@@ -728,6 +781,11 @@ document.querySelector("#fakeAvailability").addEventListener("click", async () =
   } catch (error) {
     setStatus(error.message);
   }
+});
+
+showWatchFormButton.addEventListener("click", () => {
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.querySelector("input[name='venues']")?.focus({ preventScroll: true });
 });
 
 seoulCatalogForm.addEventListener("submit", async (event) => {

@@ -37,59 +37,64 @@
       </section>
 
       <div id="appContent" class="hidden">
-        <header>
-          <h1>테니스 잡아줘</h1>
+        <header class="app-header">
+          <div class="brand-lockup">
+            <p class="eyebrow">나의 테니스 알림</p>
+            <h1>테니스 잡아줘 <span aria-hidden="true">&#9679;</span></h1>
+            <p class="brand-copy">원하는 코트의 빈자리, 놓치지 마세요.</p>
+          </div>
+          <p class="header-message">오늘도<br />좋은 코트를 만나세요.</p>
         </header>
 
-        <section id="telegramPanel" class="panel hidden">
+        <section id="telegramPanel" class="panel telegram-connect hidden">
           <h2>텔레그램 알림 연결</h2>
           <p>텔레그램 알림을 연결해주세요.</p>
           <button id="connectTelegram" type="button">텔레그램 연결하기</button>
         </section>
 
-        <section id="devicePanel" class="panel">
+        <section id="devicePanel" class="panel device-panel">
           <h2>다른 기기에서도 사용하기</h2>
           <button id="createDeviceLink" type="button">기기 연결 코드 만들기</button>
           <div id="deviceLinkResult" class="device-link-result hidden" aria-live="polite"></div>
         </section>
 
-        <section class="status-panel" aria-live="polite">
-        <div>
-          <span>마지막 조회</span>
-          <strong id="lastChecked">-</strong>
-        </div>
-        <div>
-          <span>다음 조회 예정</span>
-          <strong id="nextCheck">-</strong>
-        </div>
-        <div>
-          <span>강일</span>
-          <strong id="gangilStatus">대기 중</strong>
-          <a id="gangilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트 ↗</a>
-        </div>
-        <div>
-          <span>명일</span>
-          <strong id="myeongilStatus">대기 중</strong>
-          <a id="myeongilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트 ↗</a>
-        </div>
-        <div>
-          <span>올림픽</span>
-          <strong id="olympicStatus">대기 중</strong>
-          <a id="olympicLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트 ↗</a>
-        </div>
-        <div>
-          <span>송파</span>
-          <strong id="songpaStatus">대기 중</strong>
-          <a id="songpaLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트 ↗</a>
-        </div>
-        <div>
-          <span>하남</span>
-          <strong id="hanamStatus">대기 중</strong>
-          <a id="hanamLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트 ↗</a>
-        </div>
+        <section class="monitoring-card" aria-live="polite">
+          <div class="monitoring-state">
+            <span class="status-dot" aria-hidden="true"></span>
+            <div>
+              <strong id="monitoringTitle">모니터링 준비 중</strong>
+              <p id="monitoringDescription">등록한 알림 조건을 확인하고 있어요.</p>
+            </div>
+          </div>
+          <div class="monitoring-timing">
+            <span class="clock-mark" aria-hidden="true">&#9716;</span>
+            <div><strong>최근 <span id="lastChecked">-</span> · 다음 <span id="nextCheck">-</span></strong><p>5분 간격으로 확인 중</p></div>
+          </div>
         </section>
 
-        <form id="watchForm" class="panel">
+        <section class="overview-grid" aria-label="알림 현황">
+          <div class="overview-card">
+            <span class="overview-icon" aria-hidden="true">&#9834;</span>
+            <div><span>활성 알림</span><strong id="activeWatchCount">0</strong></div>
+          </div>
+          <div class="overview-card">
+            <span class="overview-icon" aria-hidden="true">&#9638;</span>
+            <div><span>연결된 시설</span><strong id="connectedVenueCount">0</strong></div>
+          </div>
+        </section>
+
+        <button id="showWatchForm" class="new-watch-button" type="button"><span aria-hidden="true">+</span> 새 알림 만들기 <small>원하는 날짜와 시간, 시설을 선택하세요.</small></button>
+
+        <section class="section-heading">
+          <div><p class="eyebrow">MY ALERTS</p><h2>등록한 알림</h2></div>
+          <p id="watchSummary">알림을 불러오는 중이에요.</p>
+        </section>
+        <section>
+          <div id="watches" class="watch-list"></div>
+        </section>
+
+        <form id="watchForm" class="panel watch-form-panel">
+        <div class="form-heading"><div><p class="eyebrow">NEW ALERT</p><h2>새 알림 만들기</h2></div><p>빈자리를 찾을 조건을 선택하세요.</p></div>
         <fieldset>
           <legend>테니스장</legend>
           <div id="venueGroups" class="venue-groups"></div>
@@ -110,13 +115,8 @@
         <p id="status" role="status"></p>
         </form>
 
-        <section>
-          <h2>등록된 알림 조건</h2>
-          <div id="watches" class="watch-list"></div>
-        </section>
-
         <section id="seoulCatalogPanel">
-          <h2>서울시 공공서비스예약</h2>
+          <div class="section-heading compact"><div><p class="eyebrow">EXPLORE</p><h2>서울시 공공서비스예약</h2></div></div>
           <div class="panel seoul-catalog">
             <p class="catalog-note">서울시 API의 접수 상태이며, 특정 날짜·시간의 실제 빈자리 여부와는 다를 수 있습니다.</p>
             <div class="catalog-summary">
@@ -147,8 +147,19 @@
           </div>
         </section>
 
+        <section class="provider-status-section">
+          <div class="section-heading compact"><div><p class="eyebrow">CHECK STATUS</p><h2>시설 조회 상태</h2></div></div>
+          <div class="provider-status-grid">
+            <div><span>강일</span><strong id="gangilStatus">대기 중</strong><a id="gangilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>명일</span><strong id="myeongilStatus">대기 중</strong><a id="myeongilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>올림픽</span><strong id="olympicStatus">대기 중</strong><a id="olympicLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>송파</span><strong id="songpaStatus">대기 중</strong><a id="songpaLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>하남</span><strong id="hanamStatus">대기 중</strong><a id="hanamLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+          </div>
+        </section>
+
         <section>
-          <h2>로그</h2>
+          <div class="section-heading compact"><div><p class="eyebrow">ACTIVITY</p><h2>조회 로그</h2></div></div>
           <div id="logs" class="logs"></div>
           <p id="buildInfo" class="build-info"></p>
         </section>

@@ -361,10 +361,15 @@ function normalizeState(raw) {
   const rawLogs = Array.isArray(state.system.logs) ? state.system.logs : [];
   const rawLogDetails = Array.isArray(state.system.logDetails) ? state.system.logDetails : [];
   const logEntries = rawLogs
-    .map((line, index) => ({ line, detail: rawLogDetails[index] || null }))
+    .map((line, index) => ({ line, detail: matchingLogDetail(line, rawLogDetails[index], rawLogDetails) }))
     .filter(({ line }) => !/조회 SKIP - 이전 조회 진행 중/.test(line))
     .slice(-30);
   state.system.logs = logEntries.map(({ line }) => line);
   state.system.logDetails = logEntries.map(({ detail }) => detail);
   return state;
+}
+
+function matchingLogDetail(line, indexedDetail, details) {
+  if (indexedDetail?.line === line) return indexedDetail;
+  return details.find((detail) => detail?.line === line) || null;
 }

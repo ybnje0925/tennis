@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import {
+  addLog,
   buildCycleSummary,
   buildVenueDateTargets,
   findNotifications,
@@ -167,6 +168,39 @@ describe("findNotifications", () => {
     expect(findNotifications(current, [])).toHaveLength(0);
     expect(current.lastAvailability[key].available).toBe(false);
     expect(findNotifications(current, [item])).toHaveLength(1);
+  });
+
+  it("matches Hanam continuous two-hour slots and prevents duplicates", () => {
+    const item = {
+      provider: "hanam",
+      venue: "hanam-tennis-1",
+      venueName: "하남 제1테니스장",
+      courtNo: "1",
+      date: "2026-09-14",
+      startTime: "08:00",
+      endTime: "10:00",
+      time: "08:00~10:00",
+      durationMinutes: 120,
+      available: true
+    };
+    const current = state({
+      watches: [{
+        id: "h1",
+        userId: "u1",
+        provider: "hanam",
+        venues: ["hanam-tennis-1"],
+        date: "2026-09-14",
+        times: ["08:00~10:00"],
+        enabled: true
+      }]
+    });
+
+    const first = findNotifications(current, [item]);
+    expect(first).toHaveLength(1);
+
+    current.lastAvailability[first[0].key] = { available: true };
+    current.sentNotifications[`h1|${first[0].key}`] = "2026-09-12T00:00:00.000Z";
+    expect(findNotifications(current, [item])).toHaveLength(0);
   });
 });
 
@@ -872,6 +906,110 @@ describe("runCheckCycle active watch targeting", () => {
 
     expect(checker).toHaveBeenCalledTimes(1);
     expect(summaryLog(current)).toContain("하남 1/1 성공");
+  });
+
+  it("delivers Hanam availability to the notifier and records sent dedupe keys", async () => {
+    const current = state({
+      watches: [
+        { id: "h", userId: "u1", provider: "hanam", venues: ["hanam-tennis-1"], date: "2026-09-14", times: ["08:00~10:00"], enabled: true }
+      ]
+    });
+    const hanamSlot = {
+      provider: "hanam",
+      venue: "hanam-tennis-1",
+      venueName: "하남 제1테니스장",
+      courtNo: "1",
+      date: "2026-09-14",
+      startTime: "08:00",
+      endTime: "10:00",
+      time: "08:00~10:00",
+      durationMinutes: 120,
+      available: true
+    };
+    const checker = vi.fn(async () => ({ "hanam-tennis-1": [hanamSlot] }));
+    const notifier = vi.fn(async () => {});
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier, now: new Date("2026-09-12T15:00:00.000Z") });
+    await runCheckCycle({ ...makeRunner(current, checker), notifier, now: new Date("2026-09-12T15:05:00.000Z") });
+
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(notifier.mock.calls[0][0]).toContain("하남 제1테니스장");
+    expect(notifier.mock.calls[0][0]).toContain("1코트");
+    expect(Object.keys(current.sentNotifications).some((key) => key.includes("hanam|hanam-tennis-1|1|2026-09-14|08:00|10:00"))).toBe(true);
+  });
+
+  it("keeps notification send failures separate from provider check failures", async () => {
+    const current = state();
+    const checker = vi.fn(async () => ({ gangil: [slot()] }));
+    const notifier = vi.fn(async () => {
+      throw new Error("telegram down");
+    });
+
+    await runCheckCycle({ ...makeRunner(current, checker), notifier });
+
+    expect(current.system.logs.at(-1)).toContain("빈자리 1건 → 알림 0건 → 발송실패 1건");
+    expect(current.system.logDetails.at(-1).errors).toEqual([]);
+    expect(current.system.logDetails.at(-1).notificationErrors[0]).toMatchObject({
+      type: "TELEGRAM_SEND_FAILED",
+      count: 1
+    });
+  });
+
+  it("does not attach a stale Gangdong error detail to a later Songpa success log", () => {
+    const current = state({
+      system: {
+        logs: ["[00:15] 조회실패 | 강동 0/1 성공 · 1 실패"],
+        logDetails: [{
+          line: "[00:15] 조회실패 | 강동 0/1 성공 · 1 실패",
+          errors: [{ provider: "gangdong", venueId: "gangil", message: "boom" }]
+        }],
+        venues: {},
+        providers: {}
+      }
+    });
+
+    addLog(current, "조회완료 | 송파 4/4 성공 | 빈자리 2건 → 알림 2건", new Date("2026-08-24T15:20:00.000Z"), {
+      errors: [],
+      facilities: [{ venueId: "songpa-oryun", provider: "songpa", status: "checked", count: 2 }]
+    });
+
+    expect(current.system.logDetails.at(-1).line).toBe(current.system.logs.at(-1));
+    expect(current.system.logDetails.at(-1).errors).toEqual([]);
+    expect(current.system.logDetails.at(-1).facilities[0]).toMatchObject({ provider: "songpa" });
+  });
+
+  it("keeps Songpa success and Gangdong failure details separate regardless of completion order", async () => {
+    const watches = [
+      { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
+      { id: "s", userId: "u1", venues: ["songpa-oryun"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true }
+    ];
+    const harness = makeConcurrentStateHarness(state({ watches }));
+    const checker = vi.fn(({ watches }) => {
+      if (watches.some((watch) => watch.id === "g")) {
+        const checked = {};
+        Object.defineProperty(checked, CHECK_META, {
+          value: { errors: [{ provider: "gangdong", venueId: "gangil", venueName: "강일테니스장", type: "TIMEOUT", message: "timeout" }] },
+          enumerable: false
+        });
+        return Promise.resolve(checked);
+      }
+      return Promise.resolve({
+        "songpa-oryun": [slot({ venue: "songpa-oryun", venueName: "오륜테니스장", available: false, availableCount: 0 })]
+      });
+    });
+
+    await Promise.all([
+      runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["songpa"], now: new Date("2026-08-27T13:00:00.000Z") }),
+      runCheckCycle({ checker, notifier: vi.fn(), ...harness, targetProviderIds: ["gangdong"], now: new Date("2026-08-27T13:00:00.000Z") })
+    ]);
+
+    const pairs = harness.current.system.logs.map((line, index) => ({ line, detail: harness.current.system.logDetails[index] }));
+    const songpa = pairs.find((entry) => entry.line.includes("송파 1/1 성공"));
+    const gangdong = pairs.find((entry) => entry.line.includes("강동 0/1 성공"));
+    expect(songpa.detail.line).toBe(songpa.line);
+    expect(songpa.detail.errors).toEqual([]);
+    expect(gangdong.detail.line).toBe(gangdong.line);
+    expect(gangdong.detail.errors[0]).toMatchObject({ provider: "gangdong" });
   });
 
   it("stores scheduler run times from the same cycle clock used by logs", async () => {
