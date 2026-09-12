@@ -1,4 +1,4 @@
-import { formatKoreanDateWithWeekday } from "./dateFormat.js";
+import { formatKoreanDateWithWeekday, isDateBeforeKstToday } from "./dateFormat.js";
 import { sortWatchesByReservationTime } from "./watchSorting.js";
 
 const form = document.querySelector("#watchForm");
@@ -10,7 +10,9 @@ const deviceLinkClaimForm = document.querySelector("#deviceLinkClaimForm");
 const deviceLinkClaimStatusEl = document.querySelector("#deviceLinkClaimStatus");
 const appContentEl = document.querySelector("#appContent");
 const telegramPanel = document.querySelector("#telegramPanel");
+const telegramConnectedPanel = document.querySelector("#telegramConnectedPanel");
 const connectTelegramButton = document.querySelector("#connectTelegram");
+const refreshTelegramStatusButton = document.querySelector("#refreshTelegramStatus");
 const createDeviceLinkButton = document.querySelector("#createDeviceLink");
 const deviceLinkResultEl = document.querySelector("#deviceLinkResult");
 const statusEl = document.querySelector("#status");
@@ -58,6 +60,8 @@ let venuePublicUrls = {};
 let providerPublicUrls = {};
 let currentUser = null;
 let seoulAreas = [];
+let displayedWatches = [];
+let displayActiveWatchCount = null;
 
 async function request(path, options) {
   const response = await fetch(path, {
@@ -140,6 +144,7 @@ async function loadSession() {
   invitePanel.classList.toggle("hidden", session.authenticated);
   appContentEl.classList.toggle("hidden", !session.authenticated);
   telegramPanel.classList.toggle("hidden", !session.authenticated || currentUser.telegramConnected);
+  telegramConnectedPanel.classList.toggle("hidden", !session.authenticated || !currentUser.telegramConnected);
   form.querySelector("button[type='submit']").disabled = !currentUser?.telegramConnected;
   if (session.authenticated && !currentUser.telegramConnected) {
     setStatus("텔레그램 연결 후 알림을 등록할 수 있습니다.");
@@ -189,7 +194,7 @@ async function loadStatus() {
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
-  const activeWatchCount = Number(status.currentUserActiveWatchCount || 0);
+  const activeWatchCount = displayActiveWatchCount ?? Number(status.currentUserActiveWatchCount || 0);
   monitoringTitleEl.textContent = activeWatchCount > 0 ? "모니터링 중" : "모니터링 대기 중";
   monitoringDescriptionEl.textContent = activeWatchCount > 0
     ? "선택한 시설의 잔여 코트를 주기적으로 확인하고 있어요."
@@ -556,13 +561,18 @@ function shortCommit(value) {
 
 async function loadWatches() {
   const watches = await request("/api/watches");
-  const activeWatches = watches.filter((watch) => watch.enabled !== false);
+  displayedWatches = watches;
+  renderWatches(watches);
+}
+
+function renderWatches(watches) {
+  const expiredWatches = watches.filter((watch) => isExpiredWatchDate(watch.date));
+  const activeWatches = watches.filter((watch) => watch.enabled !== false && !isExpiredWatchDate(watch.date));
+  displayActiveWatchCount = activeWatches.length;
   const connectedVenues = new Set(activeWatches.flatMap((watch) => watch.venues || []));
   activeWatchCountEl.textContent = String(activeWatches.length);
   connectedVenueCountEl.textContent = String(connectedVenues.size);
-  watchSummaryEl.textContent = activeWatches.length > 0
-    ? `${activeWatches.length}개가 활성화 중이에요.`
-    : "아직 활성화한 알림이 없어요.";
+  watchSummaryEl.textContent = watchSummaryText(activeWatches.length, expiredWatches.length);
   if (watches.length === 0) {
     watchesEl.innerHTML = `<p class="empty">등록된 알림이 없어 현재 계정은 조회 대상이 아닙니다.</p>`;
     return;
@@ -572,26 +582,38 @@ async function loadWatches() {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const date = formatWatchDate(watch.date);
       const timeLabels = watch.times.map((time) => `<span>${time}</span>`).join("");
+      const expired = isExpiredWatchDate(watch.date);
+      const state = expired ? "만료됨" : watch.enabled === false ? "일시정지" : "알림 켜짐";
       return `
-        <article class="watch ${watch.enabled === false ? "disabled" : ""}">
-          <div class="watch-main">
-            <div class="watch-date">
-              <strong>${date.day}</strong>
-              <span>${date.year}</span>
+        <details class="watch ${expired ? "expired" : watch.enabled === false ? "disabled" : ""}" ${expired ? "" : "open"}>
+          <summary class="watch-summary">
+            <div class="watch-main">
+              <div class="watch-date">
+                <strong>${date.day}</strong>
+                <span>${date.year}</span>
+              </div>
+              <div class="watch-details">
+                <strong>${venues}</strong>
+                <div class="watch-meta">${timeLabels}</div>
+                <div class="watch-state">${state}</div>
+              </div>
             </div>
-            <div class="watch-details">
-              <strong>${venues}</strong>
-              <div class="watch-meta">${timeLabels}</div>
-              <div class="watch-state">${watch.enabled === true ? "알림 켜짐" : "일시정지"}</div>
+            <div class="watch-summary-side">
+              <span class="watch-switch ${watch.enabled !== false && !expired ? "is-on" : ""}" aria-hidden="true"><span></span></span>
+              <span class="watch-state-label">${state}</span>
+              <span class="watch-chevron" aria-hidden="true"></span>
+            </div>
+          </summary>
+          <div class="watch-expanded">
+            <p>${expired ? "지난 날짜의 알림입니다. 필요하지 않다면 삭제해 주세요." : "알림 조건을 일시정지하거나 다시 켤 수 있어요."}</p>
+            <div class="watch-actions">
+              <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}" ${expired ? "disabled" : ""}>
+                ${watch.enabled === false ? "알림 켜기" : "일시정지"}
+              </button>
+              <button type="button" data-delete="${watch.id}">삭제</button>
             </div>
           </div>
-          <div class="watch-actions">
-            <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}">
-              ${watch.enabled === false ? "켜기" : "끄기"}
-            </button>
-            <button type="button" data-delete="${watch.id}">삭제</button>
-          </div>
-        </article>
+        </details>
       `;
     })
     .join("");
@@ -604,6 +626,15 @@ function formatWatchDate(value) {
   const monthDay = new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric", timeZone: "Asia/Seoul" }).format(date).replace(/\s/g, "");
   const year = new Intl.DateTimeFormat("ko-KR", { year: "numeric", timeZone: "Asia/Seoul" }).format(date);
   return { day: `${monthDay} (${weekday})`, year };
+}
+
+function isExpiredWatchDate(value) {
+  return isDateBeforeKstToday(value);
+}
+
+function watchSummaryText(activeCount, expiredCount) {
+  const active = activeCount > 0 ? `${activeCount}개가 활성화 중이에요.` : "아직 활성화한 알림이 없어요.";
+  return expiredCount > 0 ? `${active} 만료 ${expiredCount}개` : active;
 }
 
 form.addEventListener("submit", async (event) => {
@@ -676,6 +707,15 @@ connectTelegramButton.addEventListener("click", async () => {
     window.open(result.url, "_blank", "noopener,noreferrer");
     setStatus("Telegram에서 /start 메시지를 보낸 뒤 잠시 후 화면을 새로고침합니다.");
     setTimeout(bootApp, 5000);
+  } catch (error) {
+    setStatus(error.message);
+  }
+});
+
+refreshTelegramStatusButton.addEventListener("click", async () => {
+  try {
+    await loadSession();
+    setStatus(currentUser?.telegramConnected ? "텔레그램 연결 상태를 확인했습니다." : "텔레그램 연결이 아직 확인되지 않았습니다.");
   } catch (error) {
     setStatus(error.message);
   }
@@ -821,6 +861,9 @@ await bootApp();
 setInterval(async () => {
   if (currentUser) {
     const session = await loadSession();
-    if (session.authenticated) await loadStatus();
+    if (session.authenticated) {
+      renderWatches(displayedWatches);
+      await loadStatus();
+    }
   }
 }, 30_000);

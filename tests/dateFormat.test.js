@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   dateOnlyToKstDate,
   formatKoreanDateWithWeekday,
-  formatKoreanFullDateWithWeekday
+  formatKoreanFullDateWithWeekday,
+  isDateBeforeKstToday
 } from "../public/dateFormat.js";
 
 describe("shared Korean date formatting", () => {
@@ -20,5 +21,12 @@ describe("shared Korean date formatting", () => {
   it("anchors date-only values to KST midnight", () => {
     expect(dateOnlyToKstDate("2026-08-28").toISOString()).toBe("2026-08-27T15:00:00.000Z");
     expect(formatKoreanDateWithWeekday("2026-08-28")).toBe("2026-08-28 (금)");
+  });
+
+  it("marks only dates before today in Korea as expired", () => {
+    const septemberTwelfthInKorea = new Date("2026-09-11T15:30:00.000Z");
+    expect(isDateBeforeKstToday("2026-09-11", septemberTwelfthInKorea)).toBe(true);
+    expect(isDateBeforeKstToday("2026-09-12", septemberTwelfthInKorea)).toBe(false);
+    expect(isDateBeforeKstToday("2026-09-13", septemberTwelfthInKorea)).toBe(false);
   });
 });

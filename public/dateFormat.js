@@ -47,3 +47,15 @@ export function formatKoreanFullDateWithWeekday(value) {
 
   return `${parts.year}년 ${parts.month}월 ${parts.day}일 (${weekday})`;
 }
+
+export function isDateBeforeKstToday(value, now = new Date()) {
+  if (!parseIsoDateParts(value)) return false;
+  const parts = new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: SERVICE_TIME_ZONE
+  }).formatToParts(now);
+  const today = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return value < `${today.year}-${today.month}-${today.day}`;
+}

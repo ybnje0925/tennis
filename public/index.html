@@ -41,10 +41,14 @@
           <div class="brand-lockup">
             <p class="eyebrow">나의 테니스 알림</p>
             <h1>테니스 잡아줘 <span aria-hidden="true">&#9679;</span></h1>
-            <p class="brand-copy">원하는 코트의 빈자리, 놓치지 마세요.</p>
+            <p class="brand-copy">빈 코트를 더 많은 사람에게</p>
           </div>
           <p class="header-message">오늘도<br />좋은 코트를 만나세요.</p>
         </header>
+        <section class="hero-message" aria-label="서비스 안내">
+          <h2>내 알림 한눈에</h2>
+          <p>원하는 테니스 코트의 빈자리, 놓치지 마세요.</p>
+        </section>
 
         <section id="telegramPanel" class="panel telegram-connect hidden">
           <h2>텔레그램 알림 연결</h2>
@@ -91,6 +95,15 @@
         </section>
         <section>
           <div id="watches" class="watch-list"></div>
+        </section>
+
+        <section id="telegramConnectedPanel" class="telegram-status hidden" aria-live="polite">
+          <div class="telegram-mark" aria-hidden="true">&#10148;</div>
+          <div>
+            <strong>Telegram이 연결되어 있습니다.</strong>
+            <p>빈자리 알림이 텔레그램으로 전송돼요.</p>
+          </div>
+          <button id="refreshTelegramStatus" type="button">연결 상태 확인</button>
         </section>
 
         <form id="watchForm" class="panel watch-form-panel">
