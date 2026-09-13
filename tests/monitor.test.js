@@ -978,6 +978,25 @@ describe("runCheckCycle active watch targeting", () => {
     expect(current.system.logDetails.at(-1).facilities[0]).toMatchObject({ provider: "songpa" });
   });
 
+  it("uses distinct IDs when identical summary text is logged twice", () => {
+    const current = state({
+      system: { logs: [], logIds: [], logDetails: [], venues: {}, providers: {} }
+    });
+    const sameMoment = new Date("2026-08-24T15:20:00.000Z");
+
+    addLog(current, "조회완료 | 송파 4/4 성공 | 빈자리 2건 → 알림 0건", sameMoment, {
+      errors: [{ provider: "songpa", venueId: "songpa-oryun", message: "first" }]
+    });
+    addLog(current, "조회완료 | 송파 4/4 성공 | 빈자리 2건 → 알림 0건", sameMoment, {
+      errors: []
+    });
+
+    expect(current.system.logs[0]).toBe(current.system.logs[1]);
+    expect(current.system.logIds[0]).not.toBe(current.system.logIds[1]);
+    expect(current.system.logDetails[0]).toMatchObject({ logId: current.system.logIds[0], errors: [{ provider: "songpa" }] });
+    expect(current.system.logDetails[1]).toMatchObject({ logId: current.system.logIds[1], errors: [] });
+  });
+
   it("keeps Songpa success and Gangdong failure details separate regardless of completion order", async () => {
     const watches = [
       { id: "g", userId: "u1", venues: ["gangil"], date: "2026-08-29", times: ["18:00~20:00"], enabled: true },
@@ -1258,6 +1277,16 @@ describe("buildCycleSummary", () => {
       vacancyCount: 0,
       alertCount: 0
     })).toBe("조회완료 | 강동 2/2 성공 | 송파 4/4 성공 | 올림픽 1/1 성공 | 빈자리 0건");
+  });
+
+  it("explains when matching vacancies were already alerted", () => {
+    expect(buildCycleSummary({
+      checked: { gangil: [] },
+      activeVenueIds: ["gangil"],
+      vacancyCount: 2,
+      alertCount: 0,
+      suppressedAlertCount: 2
+    })).toBe("조회완료 | 강동 1/1 성공 | 빈자리 2건 → 알림 0건 → 기존 알림 2건");
   });
 
   it("formats partial Songpa success", () => {

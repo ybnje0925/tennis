@@ -312,6 +312,7 @@ function escapeHtml(value) {
 
 function renderLogs(status) {
   const logs = status.logs || [];
+  const logIds = status.logIds || [];
   const details = status.logDetails || [];
   logsEl.innerHTML = "";
   if (logs.length === 0) {
@@ -323,22 +324,25 @@ function renderLogs(status) {
   }
 
   logs
-    .map((line, index) => ({ line, detail: matchingLogDetail(line, details[index], details) }))
+    .map((line, index) => ({ line, detail: matchingLogDetail(line, logIds[index], details[index]) }))
     .reverse()
     .forEach(({ line, detail }) => logsEl.append(createLogEntry(line, detail, status.providers || {})));
 }
 
-function matchingLogDetail(line, indexedDetail, details) {
-  if (indexedDetail?.line === line) return indexedDetail;
-  return details.find((detail) => detail?.line === line) || null;
+function matchingLogDetail(line, logId, indexedDetail) {
+  const detail = logId
+    ? indexedDetail?.logId === logId ? indexedDetail : null
+    : indexedDetail?.line === line ? indexedDetail : null;
+  if (!detail) return null;
+  const labels = { gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
+  return (detail.errors || []).every((error) => !error?.provider || line.includes(labels[error.provider] || error.provider)) ? detail : null;
 }
 
 function createLogEntry(line, detail, providers) {
   const lines = String(line || "").split("\n").filter(Boolean);
   const summaryText = lines[0] || "-";
   const embeddedDetails = lines.slice(1);
-  const fallbackErrors = fallbackProviderErrors(summaryText, providers);
-  const hasDetails = embeddedDetails.length > 0 || fallbackErrors.length > 0 || detail?.errors?.length || detail?.facilities?.length || detail?.skippedProviders?.length || detail?.notificationErrors?.length;
+  const hasDetails = embeddedDetails.length > 0 || detail?.errors?.length || detail?.facilities?.length || detail?.skippedProviders?.length || detail?.notificationErrors?.length;
 
   if (!hasDetails) {
     const row = document.createElement("div");
@@ -366,7 +370,7 @@ function createLogEntry(line, detail, providers) {
     body.append(embedded);
   }
 
-  const errors = detail?.errors?.length ? detail.errors : fallbackErrors;
+  const errors = detail?.errors || [];
   if (errors.length > 0) body.append(renderErrorDetails(errors));
   if (detail?.facilities?.length) body.append(renderFacilityDetails(detail.facilities));
   if (detail?.skippedProviders?.length) body.append(renderSkippedProviderDetails(detail.skippedProviders));
@@ -455,25 +459,6 @@ function facilityStatusLabel(status) {
   return "이번 주기 조회 대상 아님";
 }
 
-function fallbackProviderErrors(line, providers) {
-  const labels = {
-    gangdong: "강동",
-    songpa: "송파",
-    olympic: "올림픽",
-    hanam: "하남"
-  };
-  return Object.entries(labels)
-    .filter(([providerId, label]) => line.includes(label) && providers[providerId]?.lastError)
-    .map(([providerId, label]) => ({
-      provider: providerId,
-      providerName: label,
-      message: providers[providerId].lastError,
-      type: inferPublicErrorType(providers[providerId].lastError),
-      targetDate: null,
-      stage: null
-    }));
-}
-
 function errorGuide(error) {
   if (error.userCategory || error.userMessage || error.userAction) {
     return {
@@ -541,19 +526,6 @@ function guideForType(type, message = "") {
   };
 }
 
-function inferPublicErrorType(message = "") {
-  const text = String(message || "");
-  if (/timeout|Timeout/i.test(text)) return "TIMEOUT";
-  if (/EAGAIN|Failed to launch|spawn .*chrome|browserType\.launch|Chromium|SIGTRAP|browser has been closed/i.test(text)) return "BROWSER_LAUNCH_FAILED";
-  if (/net::ERR_NAME_NOT_RESOLVED|ENOTFOUND|DNS/i.test(text)) return "NETWORK_DNS";
-  if (/net::ERR_CERT|TLS|certificate/i.test(text)) return "NETWORK_TLS";
-  if (/net::ERR|ECONNRESET|ECONNREFUSED|fetch failed|network/i.test(text)) return "NETWORK_ERROR";
-  if (/CALENDAR_DATE_NOT_FOUND/.test(text)) return "CALENDAR_DATE_NOT_FOUND";
-  if (/login|로그인|보호|차단|WebGate|비정상/i.test(text)) return "LOGIN_OR_PROTECTION_PAGE";
-  if (/달력 연월|year-month|날짜 이동|selector|DOM|parse|파싱/i.test(text)) return "PARSE_FAILED";
-  return "UNKNOWN_ERROR";
-}
-
 function shortCommit(value) {
   if (!value || value === "unknown") return "unknown";
   return String(value).slice(0, 7);
@@ -577,8 +549,21 @@ function renderWatches(watches) {
     watchesEl.innerHTML = `<p class="empty">등록된 알림이 없어 현재 계정은 조회 대상이 아닙니다.</p>`;
     return;
   }
-  watchesEl.innerHTML = sortWatchesByReservationTime(watches)
-    .map((watch) => {
+  const sortedWatches = sortWatchesByReservationTime(watches);
+  const groups = [
+    { title: "활성 알림", description: "빈자리를 확인 중인 알림", watches: sortedWatches.filter((watch) => watch.enabled !== false && !isExpiredWatchDate(watch.date)), open: true },
+    { title: "일시정지", description: "현재 조회하지 않는 알림", watches: sortedWatches.filter((watch) => watch.enabled === false && !isExpiredWatchDate(watch.date)), open: false },
+    { title: "만료된 알림", description: "지난 날짜의 알림", watches: sortedWatches.filter((watch) => isExpiredWatchDate(watch.date)), open: false }
+  ].filter((group) => group.watches.length > 0);
+  watchesEl.innerHTML = groups.map((group) => `
+    <details class="watch-group" ${group.open ? "open" : ""}>
+      <summary><span><strong>${group.title}</strong><small>${group.description}</small></span><span class="watch-group-count">${group.watches.length}개</span></summary>
+      <div class="watch-group-items">${group.watches.map(renderWatchCard).join("")}</div>
+    </details>
+  `).join("");
+}
+
+function renderWatchCard(watch) {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const date = formatWatchDate(watch.date);
       const timeLabels = watch.times.map((time) => `<span>${time}</span>`).join("");
@@ -615,8 +600,6 @@ function renderWatches(watches) {
           </div>
         </details>
       `;
-    })
-    .join("");
 }
 
 function formatWatchDate(value) {
@@ -714,8 +697,8 @@ connectTelegramButton.addEventListener("click", async () => {
 
 refreshTelegramStatusButton.addEventListener("click", async () => {
   try {
-    await loadSession();
-    setStatus(currentUser?.telegramConnected ? "텔레그램 연결 상태를 확인했습니다." : "텔레그램 연결이 아직 확인되지 않았습니다.");
+    await request("/api/telegram/test", { method: "POST", body: "{}" });
+    setStatus("텔레그램으로 연결 상태 메시지를 보냈습니다.");
   } catch (error) {
     setStatus(error.message);
   }

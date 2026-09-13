@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildAggregatedAvailabilityMessage,
   buildAvailabilityMessage,
-  buildOlympicAvailabilityMessage
+  buildOlympicAvailabilityMessage,
+  buildTelegramConnectionTestMessage
 } from "../src/telegramNotifier.js";
 import { formatKoreanDateWithWeekday } from "../public/dateFormat.js";
 
@@ -40,6 +41,12 @@ describe("buildAvailabilityMessage", () => {
 
     expect(message).toContain("2026-08-27 (목)");
     expect(message).toContain("06:00~08:00");
+  });
+});
+
+describe("buildTelegramConnectionTestMessage", () => {
+  it("creates a clear Telegram connection check message", () => {
+    expect(buildTelegramConnectionTestMessage()).toContain("텔레그램 연결 상태가 정상입니다.");
   });
 });
 

@@ -17,7 +17,7 @@ import {
   updateState,
   updateWatch
 } from "./storage.js";
-import { sendTelegramMessage } from "./telegramNotifier.js";
+import { buildTelegramConnectionTestMessage, sendTelegramMessage } from "./telegramNotifier.js";
 import {
   activeProviderVenueIds,
   buildVenueDateTargets,
@@ -171,6 +171,18 @@ app.post("/api/telegram/link-token", requireUser, async (req, res, next) => {
     res.json({
       url: `https://t.me/${config.telegramBotUsername}?start=${encodeURIComponent(token)}`
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/telegram/test", requireUser, async (req, res, next) => {
+  try {
+    if (!req.user.telegramConnected || !req.user.telegramChatId) {
+      return res.status(403).json({ error: "텔레그램 연결 후 상태를 확인할 수 있습니다." });
+    }
+    await sendTelegramMessage(buildTelegramConnectionTestMessage(), { chatId: req.user.telegramChatId });
+    res.json({ sent: true });
   } catch (error) {
     next(error);
   }

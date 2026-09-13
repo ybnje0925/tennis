@@ -128,8 +128,8 @@
         <p id="status" role="status"></p>
         </form>
 
-        <section id="seoulCatalogPanel">
-          <div class="section-heading compact"><div><p class="eyebrow">EXPLORE</p><h2>서울시 공공서비스예약</h2></div></div>
+        <details id="seoulCatalogPanel" class="collapsible-section">
+          <summary class="section-heading compact"><span><span class="eyebrow">EXPLORE</span><strong>서울시 공공서비스예약</strong></span><span class="section-chevron" aria-hidden="true"></span></summary>
           <div class="panel seoul-catalog">
             <p class="catalog-note">서울시 API의 접수 상태이며, 특정 날짜·시간의 실제 빈자리 여부와는 다를 수 있습니다.</p>
             <div class="catalog-summary">
@@ -158,7 +158,7 @@
             <p id="seoulCatalogStatus" role="status"></p>
             <div id="seoulPlaces" class="seoul-place-list"></div>
           </div>
-        </section>
+        </details>
 
         <section class="provider-status-section">
           <div class="section-heading compact"><div><p class="eyebrow">CHECK STATUS</p><h2>시설 조회 상태</h2></div></div>

@@ -29,6 +29,7 @@ const initialState = {
     venues: {},
     providers: {},
     logs: [],
+    logIds: [],
     logDetails: []
   }
 };
@@ -359,17 +360,33 @@ function normalizeState(raw) {
   state.system.nextRunAt ||= state.system.nextCheckAt || null;
   state.system.lastRun ||= null;
   const rawLogs = Array.isArray(state.system.logs) ? state.system.logs : [];
+  const rawLogIds = Array.isArray(state.system.logIds) ? state.system.logIds : [];
   const rawLogDetails = Array.isArray(state.system.logDetails) ? state.system.logDetails : [];
   const logEntries = rawLogs
-    .map((line, index) => ({ line, detail: matchingLogDetail(line, rawLogDetails[index], rawLogDetails) }))
+    .map((line, index) => {
+      const id = rawLogIds[index] || legacyLogId(line, index);
+      const detail = rawLogDetails[index];
+      const matched = detail?.logId === id
+        ? detail
+        : !detail?.logId && detail?.line === line
+          ? { ...detail, logId: id }
+          : null;
+      return { id, line, detail: isCompatibleLogDetail(line, matched) ? matched : null };
+    })
     .filter(({ line }) => !/조회 SKIP - 이전 조회 진행 중/.test(line))
     .slice(-30);
   state.system.logs = logEntries.map(({ line }) => line);
+  state.system.logIds = logEntries.map(({ id }) => id);
   state.system.logDetails = logEntries.map(({ detail }) => detail);
   return state;
 }
 
-function matchingLogDetail(line, indexedDetail, details) {
-  if (indexedDetail?.line === line) return indexedDetail;
-  return details.find((detail) => detail?.line === line) || null;
+function legacyLogId(line, index) {
+  return `legacy:${index}:${String(line).length}:${String(line).slice(0, 32)}`;
+}
+
+function isCompatibleLogDetail(line, detail) {
+  if (!detail) return true;
+  const labels = { gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
+  return (detail.errors || []).every((error) => !error?.provider || line.includes(labels[error.provider] || error.provider));
 }

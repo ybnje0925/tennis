@@ -95,6 +95,15 @@ export function buildTelegramTestMessage() {
   ].join("\n");
 }
 
+export function buildTelegramConnectionTestMessage() {
+  return [
+    "🎾 테니스 잡아줘",
+    "",
+    "텔레그램 연결 상태가 정상입니다.",
+    "이 채팅으로 빈자리 알림을 보내드릴게요."
+  ].join("\n");
+}
+
 export function buildAvailabilityMessage(item) {
   if (item.provider === "hanam") return buildHanamAvailabilityMessage(item);
   if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);

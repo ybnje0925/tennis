@@ -1,4 +1,5 @@
 import cron from "node-cron";
+import crypto from "node:crypto";
 import { config } from "./config.js";
 import { PROVIDERS, VENUES } from "./constants.js";
 import { CHECK_META, checkAllVenues } from "./checker.js";
@@ -140,25 +141,33 @@ export function addLog(state, message, date = new Date(), details = null) {
     timeZone: SERVICE_TIME_ZONE
   }).format(date);
   const line = `[${time}] ${message}`;
-  state.system.logDetails = alignLogDetails(state.system.logs, state.system.logDetails || []);
+  normalizeLogRecords(state);
+  const logId = crypto.randomUUID();
   state.system.logs.push(line);
+  state.system.logIds.push(logId);
   state.system.logs = state.system.logs.slice(-30);
+  state.system.logIds = state.system.logIds.slice(-state.system.logs.length);
   state.system.logDetails ||= [];
-  state.system.logDetails.push(details ? { line, ...details } : null);
+  state.system.logDetails.push(details ? { logId, line, ...details } : null);
   state.system.logDetails = state.system.logDetails.slice(-state.system.logs.length);
 }
 
-function alignLogDetails(logs = [], details = []) {
-  const next = Array(logs.length).fill(null);
-  const unused = [...details];
-  logs.forEach((line, index) => {
-    const matchIndex = unused.findIndex((detail) => detail?.line === line);
-    if (matchIndex >= 0) {
-      next[index] = unused[matchIndex];
-      unused.splice(matchIndex, 1);
-    }
+function normalizeLogRecords(state) {
+  state.system.logs ||= [];
+  const priorIds = Array.isArray(state.system.logIds) ? state.system.logIds : [];
+  const priorDetails = Array.isArray(state.system.logDetails) ? state.system.logDetails : [];
+  state.system.logIds = state.system.logs.map((line, index) => priorIds[index] || legacyLogId(line, index));
+  state.system.logDetails = state.system.logs.map((line, index) => {
+    const id = state.system.logIds[index];
+    const detail = priorDetails[index];
+    if (detail?.logId === id) return detail;
+    if (!detail?.logId && detail?.line === line) return { ...detail, logId: id };
+    return null;
   });
-  return next;
+}
+
+function legacyLogId(line, index) {
+  return `legacy:${index}:${String(line).length}:${String(line).slice(0, 32)}`;
 }
 
 export function activeProviderVenueIds(activeVenueIds) {
@@ -429,7 +438,8 @@ function mergeProviderSuccess(state, {
   skippedProviders,
   alertCount,
   checkErrors = [],
-  notificationErrors = []
+  notificationErrors = [],
+  suppressedAlertCount = 0
 }) {
   for (const providerId of providerIds) {
     const stats = providerCheckStats(providerId, targetVenueIds, checked, checkErrors);
@@ -467,7 +477,8 @@ function mergeProviderSuccess(state, {
     skippedProviders,
     vacancyCount,
     alertCount,
-    alertFailureCount: notificationErrors.length
+    alertFailureCount: notificationErrors.length,
+    suppressedAlertCount
   }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt, notificationErrors }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
@@ -678,6 +689,7 @@ export async function runCheckCycle({
       }, reservations);
       return {
         notifications,
+        matchingAvailableCount: countMatchingAvailableItems(latest, reservations),
         usersById: Object.fromEntries((latest.users || []).map((user) => [user.id, user]))
       };
     });
@@ -742,7 +754,10 @@ export async function runCheckCycle({
         skippedProviders,
         alertCount,
         checkErrors,
-        notificationErrors
+        notificationErrors,
+        suppressedAlertCount: notificationErrors.length === 0 && alertCount === 0
+          ? notificationPlan.matchingAvailableCount
+          : 0
       });
     });
   } catch (error) {
@@ -972,7 +987,7 @@ function updateAttemptedProviderSchedule(state, venueIds, checkedAt) {
   }
 }
 
-export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount, alertFailureCount = 0 }) {
+export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = [], vacancyCount, alertCount, alertFailureCount = 0, suppressedAlertCount = 0 }) {
   const activeProviders = providerTargets(activeVenueIds);
   const checkErrors = checked?.[CHECK_META]?.errors || [];
   const allFailed = Array.from(activeProviders.entries()).every(([providerId, venueIds]) => {
@@ -996,6 +1011,7 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
     if (vacancyCount > 0) {
       tail.push(`알림 ${alertCount}건`);
       if (alertFailureCount > 0) tail.push(`발송실패 ${alertFailureCount}건`);
+      if (suppressedAlertCount > 0) tail.push(`기존 알림 ${suppressedAlertCount}건`);
     }
     parts.push(tail.join(" → "));
   }
