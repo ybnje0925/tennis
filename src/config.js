@@ -35,6 +35,8 @@ export const config = {
   sessionDir: process.env.SESSION_DIR || (process.env.RAILWAY_VOLUME_MOUNT_PATH ? `${process.env.RAILWAY_VOLUME_MOUNT_PATH}/sessions` : "sessions"),
   enableTestTools: bool(process.env.ENABLE_TEST_TOOLS, false),
   enableOlympicProvider: bool(process.env.ENABLE_OLYMPIC_PROVIDER, true),
+  legacyHttpEnabled: bool(process.env.LEGACY_HTTP_ENABLED, true),
+  legacyHttpFallback: bool(process.env.LEGACY_HTTP_FALLBACK, true),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),
   checkIntervalMinutes: parsePollingMinutes(process.env.CHECK_INTERVAL_MINUTES, defaultPollingMinutes),

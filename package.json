@@ -13,6 +13,7 @@
     "diagnose:olympic": "node src/diagnoseOlympic.js",
     "diagnose:seoul": "node src/diagnoseSeoul.js",
     "diagnose:songpa": "node src/diagnoseSongpa.js",
+    "test:legacy-http": "node scripts/test-legacy-http.js",
     "create-invite": "node src/createInvite.js",
     "disable-user": "node src/disableUser.js",
     "telegram:test": "node src/telegramTest.js",

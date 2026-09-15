@@ -12,6 +12,11 @@ ENV HEADLESS=true
 ENV PORT=3000
 ENV DATA_DIR=/data/data
 ENV SESSION_DIR=/data/sessions
+# Gangdong/Songpa/other non-Olympic providers use HTTP first.  Playwright remains
+# in the image because the Olympic provider is intentionally still enabled.
+ENV LEGACY_HTTP_ENABLED=true
+ENV LEGACY_HTTP_FALLBACK=true
+ENV ENABLE_OLYMPIC_PROVIDER=true
 
 EXPOSE 3000
 

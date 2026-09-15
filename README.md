@@ -1,6 +1,6 @@
 # 테니스 잡아줘
 
-강일테니스장 / 명일테니스장의 예약현황을 정상 Chromium 브라우저 세션으로 확인하고, 원하는 날짜와 시간대에 빈자리가 생기면 Telegram으로 알려주는 개인용 MVP입니다.
+강일테니스장 / 명일테니스장 등의 예약현황을 확인하고, 원하는 날짜와 시간대에 빈자리가 생기면 Telegram으로 알려주는 개인용 MVP입니다. 강동·송파·하남·미사는 HTTP 우선으로 조회하며, 올림픽만 Playwright Chromium을 사용합니다.
 
 이 프로젝트는 자동 예약, 자동 클릭, 자동 결제, CAPTCHA 우회, WebGate 토큰 위조를 구현하지 않습니다. 로그인한 사용자가 브라우저에서 예약현황을 확인하는 흐름까지만 자동화합니다.
 
@@ -31,6 +31,8 @@ ADMIN_API_TOKEN=
 LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
+LEGACY_HTTP_ENABLED=true
+LEGACY_HTTP_FALLBACK=true
 CHECK_INTERVAL_MINUTES=5
 GANGDONG_POLLING_MINUTES=5
 SONGPA_POLLING_MINUTES=5
@@ -51,6 +53,7 @@ npm start
 npm run check
 npm run diagnose:headless
 npm run diagnose:songpa
+npm run test:legacy-http 2026-09-16
 ```
 
 Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬 `diagnose:olympic`을 동시에 실행하지 마십시오. 올림픽공원 자동 감시가 필요 없는 로컬 개발환경에서는 `ENABLE_OLYMPIC_PROVIDER=false`로 두면 scheduler/manual 자동 조회에서 Olympic provider를 호출하지 않습니다. 단, `npm run diagnose:olympic`은 명시적인 진단 명령이므로 이 값과 별도로 실행할 수 있습니다.
@@ -59,14 +62,12 @@ Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬
 
 ## 동작 방식
 
-1. Playwright Chromium persistent context를 실행합니다.
-2. 로그인 상태를 확인합니다.
-3. 로그인되어 있지 않으면 `.env` 계정으로 정상 로그인합니다.
-4. 강일/명일 예약현황 페이지로 이동합니다.
-5. WebGate 보호 페이지나 로그인 페이지가 아닌 실제 예약현황 DOM인지 검사합니다.
-6. 날짜, 시간대, 예약가능 여부, 가능 코트 수를 표준 데이터로 정규화합니다.
-7. provider별 조회주기에 맞춰 각 테니스장 현황을 조회하고 저장된 알림 조건과 비교합니다.
-8. 예약완료에서 예약가능으로 바뀌었거나, 조건 등록 시 이미 예약가능이면 Telegram으로 1회 알림을 보냅니다.
+1. 비올림픽 Provider는 cookie session을 보존하는 HTTP 요청으로 로그인/예약 HTML을 조회합니다.
+2. HTTP 조회가 실패하면 `LEGACY_HTTP_FALLBACK=true`일 때 기존 Playwright 경로로 재시도합니다.
+3. 올림픽 Provider는 Playwright Chromium persistent context를 사용합니다.
+4. 날짜, 시간대, 예약가능 여부, 가능 코트 수를 표준 데이터로 정규화합니다.
+5. provider별 조회주기에 맞춰 현황을 조회하고 저장된 알림 조건과 비교합니다.
+6. 예약가능 상태가 감지되면 Telegram으로 알림을 보냅니다.
 
 ## 데이터와 세션
 
@@ -202,6 +203,8 @@ LEGACY_OWNER_USER_ID=
 HEADLESS=true
 ENABLE_TEST_TOOLS=false
 ENABLE_OLYMPIC_PROVIDER=true
+LEGACY_HTTP_ENABLED=true
+LEGACY_HTTP_FALLBACK=true
 CHECK_INTERVAL_MINUTES=5
 GANGDONG_POLLING_MINUTES=5
 SONGPA_POLLING_MINUTES=5

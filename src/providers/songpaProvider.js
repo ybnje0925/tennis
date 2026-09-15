@@ -5,6 +5,8 @@ import { PROVIDERS, SONGPA_LOGIN_URL, TIME_SLOTS, VENUES } from "../constants.js
 import { createProviderTimer } from "../providerTiming.js";
 import { CheckDiagnosticError, classifyError, diagnosticError, errorMessageForConsole } from "../diagnostics.js";
 import { launchPersistentContext } from "../playwrightLauncher.js";
+import { CookieSession } from "../httpSession.js";
+import { parseLegacyCalendarHtml } from "../legacyHttpParser.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "songpa-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
@@ -80,6 +82,57 @@ export async function ensureSongpaLoggedIn(page, options = {}) {
 }
 
 export async function checkSongpaVenues(venueIds, options = {}) {
+  if (config.legacyHttpEnabled) {
+    try {
+      return await checkSongpaVenuesHttp(venueIds, options);
+    } catch (error) {
+      console.warn(`송파 HTTP 조회 실패 | ${error.message}`);
+      if (!config.legacyHttpFallback) throw error;
+    }
+  }
+  return checkSongpaVenuesWithPlaywright(venueIds, options);
+}
+
+async function checkSongpaVenuesHttp(venueIds, options = {}) {
+  const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "songpa");
+  if (ids.length === 0) return {};
+  const session = new CookieSession();
+  await session.request(SONGPA_LOGIN_URL);
+  const login = await session.request("https://spc.esongpa.or.kr/bbs/login_check.php", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      referer: SONGPA_LOGIN_URL
+    },
+    body: new URLSearchParams({
+      rtn_url: "https://spc.esongpa.or.kr",
+      rtn_par: "",
+      mb_id: config.songpaUserId,
+      mb_password: config.songpaUserPassword
+    })
+  });
+  if (![301, 302, 303, 307, 308].includes(login.status)) throw new Error(`송파 로그인 HTTP ${login.status}`);
+  const result = {};
+  for (const venueId of ids) {
+    const dates = options.venueDates?.[venueId] || [];
+    const months = Array.from(new Set(dates.map((date) => String(date).slice(0, 7))));
+    const pages = months.length > 0 ? months : [null];
+    const items = [];
+    for (const month of pages) {
+      const url = `${VENUES[venueId].url}${month ? `?sch_sym=${encodeURIComponent(month)}` : ""}`;
+      const response = await session.request(url, { headers: { referer: "https://spc.esongpa.or.kr/" } });
+      const html = await response.text();
+      if (!response.ok || /로그인 후|아이디를 입력|비밀번호를 입력/.test(html) || !/calendar1_table/.test(html)) {
+        throw new Error(`${VENUES[venueId].name} HTTP 인증/달력 응답이 아닙니다 (${response.status})`);
+      }
+      items.push(...parseLegacyCalendarHtml(html, venueId, "songpa"));
+    }
+    result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
+  }
+  return result;
+}
+
+async function checkSongpaVenuesWithPlaywright(venueIds, options = {}) {
   const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "songpa");
   if (ids.length === 0) return {};
 
