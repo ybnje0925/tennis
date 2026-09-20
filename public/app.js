@@ -59,6 +59,8 @@ let venueNames = {};
 let venuePublicUrls = {};
 let providerPublicUrls = {};
 let currentUser = null;
+let lastVisitPing = 0;
+let trackedPageUser = null;
 let seoulAreas = [];
 let displayedWatches = [];
 let displayActiveWatchCount = null;
@@ -831,6 +833,8 @@ function updateOlympicFields() {
 async function bootApp() {
   const session = await loadSession();
   if (!session.authenticated) return;
+  trackVisit(trackedPageUser !== currentUser.id);
+  trackedPageUser = currentUser.id;
   await loadOptions();
   updateVenueSelection();
   await loadWatches();
@@ -850,3 +854,14 @@ setInterval(async () => {
     }
   }
 }, 30_000);
+
+// Only actual foreground interaction counts; background polling is excluded.
+function trackVisit(pageView = false) {
+  if (!currentUser || document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  if (!pageView && now - lastVisitPing < 60000) return;
+  lastVisitPing = now;
+  request('/api/analytics/visit', { method: 'POST', body: JSON.stringify({ pageView }) }).catch(() => {});
+}
+for (const type of ['pointerdown', 'keydown', 'scroll']) document.addEventListener(type, () => trackVisit(), { passive: true });
+document.addEventListener('visibilitychange', () => trackVisit());

@@ -34,6 +34,8 @@ import { validateVenueSelection } from "./venueRules.js";
 import { buildInfo } from "./buildInfo.js";
 import { fetchSeoulTennisServices, filterSeoulTennisCatalog } from "./providers/seoulPublicProvider.js";
 
+import { buildDashboard, ensureAnalytics, recordVisit } from './analytics.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
@@ -103,6 +105,25 @@ function requireAdmin(req, res, next) {
 function rateLimitKeyFor(req) {
   return String(req.headers["x-forwarded-for"] || req.ip || "unknown").split(",")[0].trim();
 }
+
+app.get('/admin', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.resolve(__dirname, '..', 'public', 'admin.html'));
+});
+app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
+  try {
+    const days = Number(req.query.days || 7);
+    if (![7, 30, 90].includes(days)) return res.status(400).json({ error: '기간은 7, 30, 90일 중 선택하세요.' });
+    res.set('Cache-Control', 'no-store');
+    res.json(buildDashboard(await loadState(), days));
+  } catch (error) { next(error); }
+});
+app.post('/api/analytics/visit', requireUser, async (req, res, next) => {
+  try {
+    await updateState(state => recordVisit(state, req.user.id, req.body?.pageView === true));
+    res.status(204).end();
+  } catch (error) { next(error); }
+});
 
 app.get("/health", (req, res) => {
   res.json({ ok: true, schedulerVersion: SCHEDULER_VERSION, ...buildInfo() });
@@ -430,8 +451,12 @@ app.use((error, req, res, next) => {
   res.status(400).json({ error: error.message });
 });
 
-app.listen(config.port, () => {
-  console.log(`테니스 잡아줘 is running at http://localhost:${config.port}`);
-});
+export { app };
 
-startScheduler();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await updateState(state => { ensureAnalytics(state); });
+  app.listen(config.port, () => {
+    console.log(`테니스 잡아줘 is running at http://localhost:${config.port}`);
+  });
+  startScheduler();
+}

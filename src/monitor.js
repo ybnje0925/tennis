@@ -18,6 +18,8 @@ import {
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 import { classifyError } from "./diagnostics.js";
 
+import { recordEvent } from './analytics.js';
+
 const inFlightProviders = new Set();
 const providerRuntimeState = new Map();
 let schedulerTask = null;
@@ -701,6 +703,7 @@ export async function runCheckCycle({
   let alertCount = 0;
   const notificationErrors = [];
   for (const group of notificationGroups(notificationPlan.notifications)) {
+    let delivered = false;
     try {
       const user = notificationPlan.usersById[group.watch.userId];
       if (!user?.telegramChatId || user.enabled === false) continue;
@@ -708,7 +711,9 @@ export async function runCheckCycle({
         ? buildNotificationDigest(group.notifications.map((notification) => notification.item))
         : buildNotificationMessage(group.notifications[0].item);
       await notifier(message, user.telegramChatId);
+      delivered = true;
       await mutateState((latest) => {
+        recordEvent(latest, 'telegram_sent', { userId: group.watch.userId, watchId: group.watch.id, venues: [...new Set(group.notifications.map(n => n.item.venue))] });
         for (const notification of group.notifications) {
           latest.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
           latest.lastAvailability[notification.key] = {
@@ -728,6 +733,9 @@ export async function runCheckCycle({
       alertCount += group.notifications.length;
     } catch (error) {
       errors.push(error.message);
+      if (!delivered) {
+        await mutateState(latest => recordEvent(latest, 'telegram_failed', { userId: group.watch.userId, watchId: group.watch.id, venues: [...new Set(group.notifications.map(n => n.item.venue))] })).catch(e => console.error('발송 통계 기록 실패:', e.message));
+      }
       notificationErrors.push({
         type: "TELEGRAM_SEND_FAILED",
         message: error.message,

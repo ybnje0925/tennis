@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import { config } from "./config.js";
 import { normalizeDate, normalizeTimeSlot } from "./normalization.js";
 
+import { recordEvent } from './analytics.js';
+
 const DATA_DIR = path.resolve(config.dataDir);
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const STATE_TMP_FILE = path.join(DATA_DIR, "state.json.tmp");
@@ -89,6 +91,7 @@ export async function addWatch(input) {
       createdAt: new Date().toISOString()
     };
     state.watches.push(watch);
+    recordEvent(state, 'watch_created', { userId: watch.userId, watchId: watch.id, venues: watch.venues, date: watch.date, times: watch.times });
     return watch;
   });
 }
@@ -98,6 +101,7 @@ export async function deleteWatch(id, userId = null) {
     const watch = state.watches.find((item) => item.id === id);
     if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
     if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
+    recordEvent(state, 'watch_deleted', { userId: watch.userId, watchId: watch.id, venues: watch.venues, date: watch.date, times: watch.times });
     state.watches = state.watches.filter((item) => item.id !== id);
     for (const key of Object.keys(state.sentNotifications)) {
       if (key.startsWith(`${id}|`)) delete state.sentNotifications[key];
@@ -110,7 +114,10 @@ export async function updateWatch(id, patch, userId = null) {
     const watch = state.watches.find((item) => item.id === id);
     if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
     if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
-    if (typeof patch.enabled === "boolean") watch.enabled = patch.enabled;
+    if (typeof patch.enabled === "boolean" && watch.enabled !== patch.enabled) {
+      watch.enabled = patch.enabled;
+      recordEvent(state, patch.enabled ? 'watch_enabled' : 'watch_disabled', { userId: watch.userId, watchId: watch.id, venues: watch.venues });
+    }
     return watch;
   });
 }
