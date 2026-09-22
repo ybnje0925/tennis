@@ -45,7 +45,8 @@ export const config = {
     songpa: parsePollingMinutes(process.env.SONGPA_POLLING_MINUTES, defaultPollingMinutes),
     olympic: parsePollingMinutes(process.env.OLYMPIC_POLLING_MINUTES, defaultPollingMinutes),
     hanam: parsePollingMinutes(process.env.HANAM_POLLING_MINUTES, defaultPollingMinutes)
-  }
+  },
+  schedulerQuietHours: { start: "01:00", end: "06:00", timeZone: "Asia/Seoul" }
 };
 
 export function assertLoginConfig() {

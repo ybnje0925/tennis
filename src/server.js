@@ -27,6 +27,9 @@ import {
   providerPollingMinutes,
   runCheckCycle,
   SCHEDULER_VERSION,
+  SCHEDULER_QUIET_HOURS,
+  isWithinSchedulerQuietHours,
+  nextSchedulerActiveAt,
   startScheduler,
   syncProviderSchedule
 } from "./monitor.js";
@@ -307,6 +310,12 @@ function buildStatusPayload(state, userId, now) {
   return {
     ...state.system,
     schedulerVersion: SCHEDULER_VERSION,
+    schedulerPolicy: {
+      timeZone: SCHEDULER_QUIET_HOURS.timeZone,
+      quietHours: SCHEDULER_QUIET_HOURS,
+      quietHoursActive: isWithinSchedulerQuietHours(now),
+      nextActiveAt: nextSchedulerActiveAt(now)
+    },
     ...buildInfo(now),
     currentUserWatchCount: userWatches.length,
     currentUserActiveWatchCount: activeUserWatches.length,

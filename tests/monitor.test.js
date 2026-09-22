@@ -8,6 +8,8 @@ import {
   groupActiveWatchesByVenue,
   isProviderDue,
   isProviderWithinMonitoringHours,
+  isWithinSchedulerQuietHours,
+  nextSchedulerActiveAt,
   keyFor,
   nextFixedSlotAt,
   nextProviderMonitoringStartAt,
@@ -287,6 +289,16 @@ function withProviderPolling(values, callback) {
 }
 
 describe("runCheckCycle active watch targeting", () => {
+  it("does not call providers during the KST quiet hours", async () => {
+    const runner = makeRunner(state(), vi.fn());
+    const result = await runCheckCycle({ ...runner, now: new Date("2026-08-24T17:00:00.000Z") });
+
+    expect(isWithinSchedulerQuietHours(new Date("2026-08-24T17:00:00.000Z"))).toBe(true);
+    expect(nextSchedulerActiveAt(new Date("2026-08-24T17:00:00.000Z"))).toBe("2026-08-24T21:00:00.000Z");
+    expect(runner.checker).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ skipped: true, quietHours: true });
+  });
+
   function makeRunner(current, checker = vi.fn(async () => ({}))) {
     return {
       checker,
@@ -835,7 +847,7 @@ describe("runCheckCycle active watch targeting", () => {
     });
 
     await withProviderPolling({ gangdong: 5, songpa: 5, olympic: 10 }, async () => {
-      await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-24T17:55:00.000Z") });
+      await runCheckCycle({ ...makeRunner(current, checker), now: new Date("2026-08-24T08:55:00.000Z") });
 
       expect(summaryLog(current)).toContain("강동 1/1 성공");
       expect(summaryLog(current)).toContain("송파 1/1 성공");
@@ -1098,23 +1110,23 @@ describe("syncProviderSchedule", () => {
     const current = state();
 
     withProviderPolling({ gangdong: 5 }, () => {
-      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T08:50:00.000Z"));
     });
 
     expect(current.system.providers.gangdong.pollingMinutes).toBe(5);
-    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
-    expect(current.system.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T08:55:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T08:55:00.000Z");
   });
 
   it("sets nextCheckAt to 18:00 after a 17:55 check slot", () => {
     const current = state();
 
     withProviderPolling({ gangdong: 5 }, () => {
-      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:55:00.000Z"));
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T08:55:00.000Z"));
     });
 
-    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
-    expect(current.system.nextCheckAt).toBe("2026-08-24T18:00:00.000Z");
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T09:00:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T09:00:00.000Z");
   });
 
   it("overwrites stale state polling and stale nextCheckAt from current runtime provider config", () => {
@@ -1137,12 +1149,12 @@ describe("syncProviderSchedule", () => {
     });
 
     withProviderPolling({ gangdong: 5 }, () => {
-      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+      syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T08:50:00.000Z"));
     });
 
     expect(current.system.providers.gangdong.pollingMinutes).toBe(5);
-    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
-    expect(current.system.nextCheckAt).toBe("2026-08-24T17:55:00.000Z");
+    expect(current.system.providers.gangdong.nextCheckAt).toBe("2026-08-24T08:55:00.000Z");
+    expect(current.system.nextCheckAt).toBe("2026-08-24T08:55:00.000Z");
   });
 
   it("does not revive a persisted pending flag after process restart", () => {
@@ -1159,14 +1171,14 @@ describe("syncProviderSchedule", () => {
             pollingMinutes: 5,
             pending: true,
             status: "pending",
-            lastCheckedAt: "2026-08-24T17:50:00.000Z",
-            nextCheckAt: "2026-08-24T17:55:00.000Z"
+            lastCheckedAt: "2026-08-24T08:50:00.000Z",
+            nextCheckAt: "2026-08-24T08:55:00.000Z"
           }
         }
       }
     });
 
-    syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T17:50:00.000Z"));
+    syncProviderSchedule(current, ["gangdong"], new Date("2026-08-24T08:50:00.000Z"));
 
     expect(current.system.providers.gangdong.pending).toBe(false);
     expect(current.system.providers.gangdong.status).toBe("idle");

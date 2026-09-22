@@ -23,6 +23,7 @@ const testToolsEl = document.querySelector("#testTools");
 const logsEl = document.querySelector("#logs");
 const lastCheckedEl = document.querySelector("#lastChecked");
 const nextCheckEl = document.querySelector("#nextCheck");
+const schedulerPolicyEl = document.querySelector("#schedulerPolicy");
 const buildInfoEl = document.querySelector("#buildInfo");
 const monitoringTitleEl = document.querySelector("#monitoringTitle");
 const monitoringDescriptionEl = document.querySelector("#monitoringDescription");
@@ -106,6 +107,9 @@ function formatProviderStatus(status, providerId, active) {
   if (status.currentUserActiveWatchCount === 0) return "현재 계정 조회 대상 아님";
   if (!active) return "미사용";
   const provider = status.providers?.[providerId] || {};
+  if (provider.monitoringStatus === "quiet-hours") {
+    return `야간 절전 · ${formatDateTime(provider.nextCheckAt)}부터 조회`;
+  }
   if (provider.monitoringStatus === "outside-hours") {
     return `운영시간 외 · ${formatDateTime(provider.nextCheckAt)}부터 조회`;
   }
@@ -197,10 +201,16 @@ async function loadStatus() {
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
   const activeWatchCount = displayActiveWatchCount ?? Number(status.currentUserActiveWatchCount || 0);
-  monitoringTitleEl.textContent = activeWatchCount > 0 ? "모니터링 중" : "모니터링 대기 중";
-  monitoringDescriptionEl.textContent = activeWatchCount > 0
-    ? "선택한 시설의 잔여 코트를 주기적으로 확인하고 있어요."
-    : "알림 조건을 등록하면 5분 간격으로 빈자리를 확인해요.";
+  const quietHoursActive = status.schedulerPolicy?.quietHoursActive;
+  monitoringTitleEl.textContent = quietHoursActive ? "야간 절전 중" : activeWatchCount > 0 ? "모니터링 중" : "모니터링 대기 중";
+  monitoringDescriptionEl.textContent = quietHoursActive
+    ? `01:00~06:00에는 자동 조회를 쉬고 ${formatDateTime(status.schedulerPolicy?.nextActiveAt)}부터 다시 확인해요.`
+    : activeWatchCount > 0
+      ? "선택한 시설의 잔여 코트를 주기적으로 확인하고 있어요."
+      : "활성 알림이 없으면 예약현황을 조회하지 않아 사용량을 아껴요.";
+  schedulerPolicyEl.textContent = quietHoursActive
+    ? "매일 한국 시간 01:00~06:00 자동 중지"
+    : "활성 알림이 있을 때만 확인 · 매일 01:00~06:00 자동 중지";
   renderLogs(status);
   buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
 }

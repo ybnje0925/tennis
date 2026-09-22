@@ -25,6 +25,7 @@ const providerRuntimeState = new Map();
 let schedulerTask = null;
 const SERVICE_TIME_ZONE = "Asia/Seoul";
 export const SCHEDULER_VERSION = "provider-pending-v2";
+export const SCHEDULER_QUIET_HOURS = config.schedulerQuietHours;
 
 export function keyFor(item) {
   if (item.provider === "olympic") return olympicKeyFor(item);
@@ -224,6 +225,19 @@ export function nextProviderMonitoringStartAt(providerId, date = new Date()) {
   return kstDateTimeToInstant({ ...kstParts(date), minuteOfDay: start }, date);
 }
 
+export function isWithinSchedulerQuietHours(date = new Date()) {
+  const current = kstMinuteOfDay(date);
+  const start = clockToMinutes(SCHEDULER_QUIET_HOURS.start);
+  const end = clockToMinutes(SCHEDULER_QUIET_HOURS.end);
+  return start < end ? current >= start && current < end : current >= start || current < end;
+}
+
+export function nextSchedulerActiveAt(date = new Date()) {
+  if (!isWithinSchedulerQuietHours(date)) return null;
+  const end = clockToMinutes(SCHEDULER_QUIET_HOURS.end);
+  return kstDateTimeToInstant({ ...kstParts(date), minuteOfDay: end }, date);
+}
+
 function clockToMinutes(value) {
   const [hour, minute] = String(value).split(":").map(Number);
   return hour * 60 + minute;
@@ -298,11 +312,14 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
     const runtime = providerRuntime(providerId);
     const pollingMinutes = providerPollingMinutes(providerId);
     const lastCheckedAt = previous.lastCheckedAt || null;
+    const quietHours = isWithinSchedulerQuietHours(now);
     const withinMonitoringHours = isProviderWithinMonitoringHours(providerId, now);
     const pending = Boolean(runtime.pending);
     const status = !active.has(providerId)
       ? "idle"
-      : !withinMonitoringHours
+      : quietHours
+        ? "quiet-hours"
+        : !withinMonitoringHours
         ? "outside-hours"
         : runtime.inFlight
           ? "running"
@@ -327,9 +344,9 @@ export function syncProviderSchedule(state, activeProviderIds, now = new Date())
       lastError: previous.lastError || null,
       lastErrorAt: previous.lastErrorAt || null,
       monitoringHours: PROVIDERS[providerId]?.monitoringHours || null,
-      monitoringStatus: withinMonitoringHours ? "active" : "outside-hours",
+      monitoringStatus: quietHours ? "quiet-hours" : withinMonitoringHours ? "active" : "outside-hours",
       nextCheckAt: active.has(providerId)
-        ? (withinMonitoringHours ? nextFixedSlotAt(now, pollingMinutes) : nextProviderMonitoringStartAt(providerId, now))
+        ? (quietHours ? nextSchedulerActiveAt(now) : withinMonitoringHours ? nextFixedSlotAt(now, pollingMinutes) : nextProviderMonitoringStartAt(providerId, now))
         : null
     };
   }
@@ -496,6 +513,9 @@ export async function runCheckCycle({
   targetProviderIds = null,
   forceDue = false
 } = {}) {
+  if ((source === "scheduler" || source === "scheduler-pending") && isWithinSchedulerQuietHours(now)) {
+    return { checkedAt: now.toISOString(), reservations: [], notifications: [], errors: [], skipped: true, quietHours: true };
+  }
   const mutateState = createStateUpdater(stateLoader, stateSaver, stateUpdater);
   const state = await stateLoader();
   const runStartedAt = now.toISOString();
@@ -1177,6 +1197,7 @@ export function startScheduler() {
     })
     .catch((error) => console.error(`Scheduler state update failed: ${error.message}`));
   const task = cron.schedule(expression, () => {
+    if (isWithinSchedulerQuietHours()) return;
     for (const providerId of Object.keys(PROVIDERS)) {
       runCheckCycle({ targetProviderIds: [providerId] }).catch((error) => {
         console.error(`${providerLabel(providerId)} check cycle failed: ${error.message}`);
