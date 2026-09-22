@@ -47,32 +47,51 @@ export async function openOlympicSession(options = {}) {
 
 async function createOlympicSession(options = {}) {
   await mkdir(SESSION_DIR, { recursive: true });
-  const context = await launchPersistentContext(
-    SESSION_DIR,
-    {
-      headless: options.headless ?? config.headless,
-      viewport: { width: 1365, height: 900 },
-      locale: "ko-KR"
-    },
-    {
-      timeoutMs: BROWSER_LAUNCH_TIMEOUT_MS,
-      providerLabel: "올림픽",
-      stepLabel: "브라우저 실행"
+  let context = null;
+  try {
+    context = await launchPersistentContext(
+      SESSION_DIR,
+      {
+        headless: options.headless ?? config.headless,
+        viewport: { width: 1365, height: 900 },
+        locale: "ko-KR"
+      },
+      {
+        timeoutMs: BROWSER_LAUNCH_TIMEOUT_MS,
+        providerLabel: "올림픽",
+        stepLabel: "브라우저 실행"
+      }
+    );
+    console.info(`[Olympic] browser started | profile=${SESSION_DIR}`);
+
+    const page = context.pages()[0] || await context.newPage();
+    page.setDefaultTimeout(20_000);
+    page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
+    const originalClose = context.close.bind(context);
+    context.close = async (...args) => {
+      let closed = false;
+      try {
+        const result = await originalClose(...args);
+        closed = true;
+        return result;
+      } finally {
+        if (olympicSession?.context === context) olympicSession = null;
+        console.info(`[Olympic] browser ${closed ? "closed" : "close failed"} | profile=${SESSION_DIR}`);
+      }
+    };
+    olympicSession = { context, page };
+    return { ...olympicSession, sessionSource: "restored" };
+  } catch (error) {
+    if (context) {
+      try {
+        await context.close();
+        console.info(`[Olympic] browser closed | profile=${SESSION_DIR}`);
+      } catch (closeError) {
+        console.error(`[Olympic] browser close failed | profile=${SESSION_DIR} | ${closeError.message}`);
+      }
     }
-  );
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(20_000);
-  page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
-  const originalClose = context.close.bind(context);
-  context.close = async (...args) => {
-    try {
-      return await originalClose(...args);
-    } finally {
-      if (olympicSession?.context === context) olympicSession = null;
-    }
-  };
-  olympicSession = { context, page };
-  return { ...olympicSession, sessionSource: "restored" };
+    throw error;
+  }
 }
 
 export async function closeOlympicSession() {
@@ -573,7 +592,15 @@ export async function checkOlympicByWatches(watches) {
     }
     throw error;
   } finally {
-    timer.end(errorForTimer);
+    let closeError = null;
+    try {
+      await closeOlympicSession();
+    } catch (error) {
+      closeError = error;
+      console.error(`[Olympic] browser shutdown failed: ${error.message}`);
+    }
+    timer.end(errorForTimer || closeError);
+    if (!errorForTimer && closeError) throw closeError;
   }
 }
 

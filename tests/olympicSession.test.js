@@ -151,4 +151,20 @@ describe("Olympic session reuse and login locking", () => {
     expect(second.sessionSource).toBe("restored");
     expect(launchPersistentContext).toHaveBeenCalledTimes(2);
   });
+
+  it("logs browser lifecycle events while keeping the persistent profile", async () => {
+    const { openOlympicSession } = await importProvider();
+    const fake = createPage();
+    const context = { pages: () => [fake.page], close: vi.fn(async () => {}) };
+    launchPersistentContext.mockResolvedValue(context);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const session = await openOlympicSession();
+    await session.context.close();
+
+    expect(info.mock.calls.some(([message]) => message.includes("browser started"))).toBe(true);
+    expect(info.mock.calls.some(([message]) => message.includes("browser closed"))).toBe(true);
+    expect(launchPersistentContext).toHaveBeenCalledWith(expect.stringContaining("olympic-profile"), expect.any(Object));
+    info.mockRestore();
+  });
 });
