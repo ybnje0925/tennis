@@ -23,6 +23,15 @@ it('blocks anonymous and ordinary user dashboard access',async()=>{
   expect((await fetch(base+'/api/admin/dashboard',{headers:{authorization:`Bearer ${userToken}`}})).status).toBe(403);
   expect((await fetch(base+'/api/admin/dashboard',{headers:{'x-admin-token':'wrong'}})).status).toBe(403);
 });
+it('generates an invite code through the protected admin endpoint',async()=>{
+  const unauthorized=await fetch(base+'/api/admin/invites',{method:'POST'});
+  expect(unauthorized.status).toBe(403);
+  const response=await fetch(base+'/api/admin/invites',{method:'POST',headers:{'x-admin-token':'test-admin-token'}});
+  const body=await response.json();
+  expect(response.status).toBe(201);
+  expect(body.code).toMatch(/^TENNIS-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}$/);
+  expect((await storage.loadState()).inviteCodes.at(-1).code).toBe(body.code);
+});
 it('tracks authenticated visits and deleted watches through to protected dashboard',async()=>{
   expect((await fetch(base+'/api/analytics/visit',{method:'POST'})).status).toBe(401);
   const headers={authorization:`Bearer ${userToken}`,'content-type':'application/json'};

@@ -10,6 +10,7 @@ import {
   connectTelegramLinkToken,
   createDeviceLinkCode,
   createTelegramLinkToken,
+  addInviteCode,
   deleteWatch,
   getUserBySessionToken,
   loadState,
@@ -119,6 +120,13 @@ app.get('/api/admin/dashboard', requireAdmin, async (req, res, next) => {
     if (![7, 30, 90].includes(days)) return res.status(400).json({ error: '기간은 7, 30, 90일 중 선택하세요.' });
     res.set('Cache-Control', 'no-store');
     res.json(buildDashboard(await loadState(), days));
+  } catch (error) { next(error); }
+});
+app.post('/api/admin/invites', requireAdmin, async (req, res, next) => {
+  try {
+    const invite = await addInviteCode();
+    res.set('Cache-Control', 'no-store');
+    res.status(201).json({ code: invite.code, createdAt: invite.createdAt });
   } catch (error) { next(error); }
 });
 app.post('/api/analytics/visit', requireUser, async (req, res, next) => {

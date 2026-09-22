@@ -3,6 +3,10 @@ const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp
 const date = value => value ? new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul'}) : '기록 없음';
 let token = '', data = null, requestVersion = 0;
 const eventNames = {watch_created:'알림 생성',watch_deleted:'알림 삭제',watch_enabled:'알림 켜기',watch_disabled:'알림 끄기',telegram_sent:'발송 성공',telegram_failed:'발송 실패'};
+async function copyText(value) {
+  if (!navigator.clipboard?.writeText) return false;
+  try { await navigator.clipboard.writeText(value); return true; } catch { return false; }
+}
 async function load() {
   const version = ++requestVersion;
   $('message').textContent = '불러오는 중…';
@@ -18,6 +22,23 @@ async function load() {
   finally { if(version === requestVersion) $('refresh').disabled=false; }
 }
 function lock(){ ++requestVersion; token='';data=null;$('dashboard').hidden=true;$('login').hidden=false;$('token').value='';$('users').replaceChildren();$('detailBody').replaceChildren();$('message').textContent='';$('refresh').disabled=false; }
+async function generateInvite() {
+  const button = $('generateInvite');
+  button.disabled = true;
+  $('inviteMessage').textContent = '발급 중…';
+  try {
+    const response = await fetch('/api/admin/invites', { method: 'POST', headers: { 'x-admin-token': token } });
+    const body = await response.json();
+    if (!response.ok) throw Error(body.error || '초대코드를 발급하지 못했습니다.');
+    $('inviteCode').textContent = body.code;
+    $('inviteCode').hidden = false;
+    $('copyInvite').hidden = false;
+    $('inviteMessage').textContent = '새 초대코드가 발급되었습니다.';
+    await copyText(body.code);
+    await load();
+  } catch (error) { $('inviteMessage').textContent = error.message; }
+  finally { button.disabled = false; }
+}
 function render(){
   const s=data.summary;
   $('updated').textContent='갱신 '+date(data.generatedAt);
@@ -49,3 +70,8 @@ $('users').addEventListener('click',e=>{
 $('loginForm').addEventListener('submit',e=>{e.preventDefault();token=$('token').value.trim();load();});
 $('refresh').addEventListener('click',load);$('days').addEventListener('change',load);$('logout').addEventListener('click',lock);
 $('search').addEventListener('input',()=>data&&renderUsers());$('hourMetric').addEventListener('change',()=>data&&renderHours());$('closeDetail').addEventListener('click',()=>$('detail').hidden=true);
+$('generateInvite').addEventListener('click', generateInvite);
+$('copyInvite').addEventListener('click', async () => {
+  const copied = await copyText($('inviteCode').textContent);
+  $('inviteMessage').textContent = copied ? '초대코드를 복사했습니다.' : '초대코드를 선택해 복사해주세요.';
+});
