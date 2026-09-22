@@ -204,6 +204,8 @@ export async function selectCourtType(page, courtType, options = {}) {
 export async function selectDate(page, date, options = {}) {
   const clicked = await maybeStep(options.timer, `날짜 선택 ${date}`, () => page.evaluate(({ isoDate }) => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+    const hasCalendarStatus = (text) => ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
+    const parseCount = (text, label) => Number.parseInt(text.match(new RegExp(`${label}\\s*(?:[-–—:]\\s*)?(\\d+)\\s*건`))?.[1] || "0", 10);
     const parsePeriod = (text) => {
       const full = normalize(text).match(/(20\d{2})\s*\.\s*([01]?\d)\s*\.\s*([0-3]?\d)\s*~\s*(?:(20\d{2})\s*\.\s*)?([01]?\d)\s*\.\s*([0-3]?\d)/);
       if (!full) return null;
@@ -227,7 +229,7 @@ export async function selectDate(page, date, options = {}) {
     const extractDay = (text) => {
       const datePrefix = normalize(text).match(/^([0-3]?\d)\b/);
       if (datePrefix) return datePrefix[1].padStart(2, "0");
-      const beforeStatus = normalize(text).match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*\d+\s*건)/);
+      const beforeStatus = normalize(text).match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*(?:[-–—:]\s*)?\d+\s*건)/);
       return beforeStatus ? beforeStatus[1].padStart(2, "0") : null;
     };
     const findNextDateForDay = (startDate, endDate, day) => {
@@ -249,12 +251,12 @@ export async function selectDate(page, date, options = {}) {
     }
 
     const root = Array.from(document.querySelectorAll(".online_area .app_type .cate_con, .online_area, .app_type, section, article, main, body"))
-      .find((element) => /가능\s*\d+\s*건/.test(normalize(element.innerText || element.textContent || ""))) || document.body;
+      .find((element) => hasCalendarStatus(normalize(element.innerText || element.textContent || ""))) || document.body;
     const period = parsePeriod(document.body.innerText || "");
     let cursor = period?.startDate || isoDate.slice(0, 8) + "01";
     const candidates = Array.from(root.querySelectorAll("li, td")).filter((element) => {
       const text = normalize(element.innerText || element.textContent || "");
-      return /가능\s*\d+\s*건/.test(text) && /진행\s*\d+\s*건/.test(text) && /마감\s*\d+\s*건/.test(text);
+      return hasCalendarStatus(text);
     });
 
     let target = null;
@@ -263,7 +265,7 @@ export async function selectDate(page, date, options = {}) {
       const day = extractDay(text);
       const cellDate = day && cursor ? findNextDateForDay(cursor, period?.endDate, day) : null;
       if (cellDate === isoDate) {
-        const possibleCount = Number.parseInt(text.match(/가능\s*(\d+)\s*건/)?.[1] || "0", 10);
+        const possibleCount = parseCount(text, "가능");
         target = possibleCount > 0 ? element : null;
         break;
       }
@@ -273,8 +275,7 @@ export async function selectDate(page, date, options = {}) {
     if (!target) return false;
 
     const possibleButton = target.querySelector("a, button, input");
-    if (!possibleButton) return false;
-    possibleButton.click();
+    (possibleButton || target).click();
     return true;
   }, { isoDate: date }));
 
@@ -292,11 +293,12 @@ export async function readOlympicCalendar(page, fallbackYear = new Date().getFul
   await waitForOlympicCalendar(page).catch(() => {});
   const raw = await page.evaluate(() => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+    const hasCalendarStatus = (text) => ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
     const root = Array.from(document.querySelectorAll(".online_area .app_type .cate_con, .online_area, .app_type, section, article, main, body"))
-      .find((element) => /가능\s*\d+\s*건/.test(normalize(element.innerText || element.textContent || ""))) || document.body;
+      .find((element) => hasCalendarStatus(normalize(element.innerText || element.textContent || ""))) || document.body;
     const rawCells = Array.from(root.querySelectorAll("li, td")).filter((element) => {
       const text = normalize(element.innerText || element.textContent || "");
-      return /가능\s*\d+\s*건/.test(text) && /진행\s*\d+\s*건/.test(text) && /마감\s*\d+\s*건/.test(text);
+      return hasCalendarStatus(text);
     }).map((element) => ({
       text: normalize(element.innerText || element.textContent || "")
     }));
@@ -318,7 +320,8 @@ export async function readOlympicCalendar(page, fallbackYear = new Date().getFul
 export async function waitForOlympicCalendar(page) {
   await page.waitForFunction(() => {
     const text = document.body.innerText || "";
-    return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || /가능\s*\d+\s*건/.test(text);
+    const hasCalendarStatus = ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
+    return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCalendarStatus;
   }, null, { timeout: 15_000 });
 }
 
@@ -341,11 +344,11 @@ export async function parseOlympicTimeSlots(page, date, courtType) {
 export async function selectTimeSlot(page, slot) {
   const clicked = await page.evaluate(({ startTime, endTime }) => {
     const compact = `${startTime}~${endTime}`.replace(/\s+/g, "");
-    const candidates = Array.from(document.querySelectorAll("button, a, label, li, td, div"));
-    const target = candidates.find((element) => {
-      const text = (element.innerText || element.textContent || "").replace(/\s+/g, "");
-      return text.includes(compact) && /신청가능|가능|선택/.test(text);
-    });
+    const candidates = Array.from(document.querySelectorAll("button, a, label, li, td, div, span"))
+      .map((element) => ({ element, text: (element.innerText || element.textContent || "").replace(/\s+/g, "") }))
+      .filter(({ text }) => text.includes(compact) && /신청가능|예약가능|가능|선택/.test(text) && !/신청마감|예약마감|마감|선택불가/.test(text))
+      .sort((a, b) => a.text.length - b.text.length);
+    const target = candidates[0]?.element;
     if (!target) return false;
     (target.querySelector("button, a, input") || target).click();
     return true;
@@ -381,8 +384,10 @@ export async function parseAvailableOlympicCourts(page, base) {
 
 export function parseOlympicTimeSlotElements(elements, base) {
   const byKey = new Map();
-  for (const element of elements) {
+  const orderedElements = elements.slice().sort((a, b) => String(a.text || "").length - String(b.text || "").length);
+  for (const element of orderedElements) {
     const text = `${element.text || ""} ${element.title || ""}`.replace(/\s+/g, " ").trim();
+    if ((text.match(/[0-2]?\d:00\s*~\s*[0-2]?\d:00/g) || []).length > 1) continue;
     const match = text.match(/([0-2]?\d):00\s*~\s*([0-2]?\d):00/);
     if (!match) continue;
     const startTime = `${match[1].padStart(2, "0")}:00`;
@@ -411,8 +416,10 @@ export function parseOlympicTimeSlotElements(elements, base) {
 
 export function parseOlympicCourtElements(elements, base) {
   const byCourt = new Map();
-  for (const element of elements) {
+  const orderedElements = elements.slice().sort((a, b) => String(a.text || "").length - String(b.text || "").length);
+  for (const element of orderedElements) {
     const text = `${element.text || ""} ${element.title || ""} ${element.ariaLabel || ""}`.replace(/\s+/g, " ").trim();
+    if ((text.match(/(?:[1-9]|1\d|2\d)\s*번?\s*코트/g) || []).length > 1) continue;
     const court = text.match(/(?:^|\D)([1-9]|1\d|2\d)(?:번\s*코트|코트|번)?(?:\D|$)/)?.[1];
     if (!court) continue;
     const statusText = `${text} ${element.className || ""} ${element.dataState || ""}`;
@@ -689,12 +696,12 @@ function extractOlympicCellDay(text) {
   const normalized = normalizeText(text);
   const datePrefix = normalized.match(/^([0-3]?\d)\b/);
   if (datePrefix) return datePrefix[1].padStart(2, "0");
-  const beforeStatus = normalized.match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*\d+\s*건)/);
+  const beforeStatus = normalized.match(/(?:^|\D)([0-3]?\d)(?=\s*가능\s*(?:[-–—:]\s*)?\d+\s*건)/);
   return beforeStatus ? beforeStatus[1].padStart(2, "0") : null;
 }
 
 function parseStatusCount(text, label) {
-  const match = text.match(new RegExp(`${label}\\s*(\\d+)\\s*건`));
+  const match = text.match(new RegExp(`${label}\\s*(?:[-–—:]\\s*)?(\\d+)\\s*건`));
   return match ? Number.parseInt(match[1], 10) : 0;
 }
 

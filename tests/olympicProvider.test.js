@@ -96,6 +96,20 @@ describe("Olympic court parsing", () => {
     });
   });
 
+  it("parses the new calendar count labels with a separator", () => {
+    const period = parseOlympicCalendarPeriodText("2026.09.20 ~ 2026.10.02");
+    const cells = buildOlympicCalendarCells([
+      { text: "28 가능 - 13건 진행 - 0건 마감 - 110건" }
+    ], { period });
+
+    expect(findOlympicDateStatus({ cells }, "2026-09-28")).toMatchObject({
+      date: "2026-09-28",
+      possibleCount: 13,
+      pendingCount: 0,
+      closedCount: 110
+    });
+  });
+
   it("returns null when the date itself is not in the detected cells", () => {
     const period = parseOlympicCalendarPeriodText("2026.08.24 ~ 2026.08.29");
     const cells = buildOlympicCalendarCells([
@@ -142,6 +156,31 @@ describe("Olympic court parsing", () => {
 
     expect(timeSlots[0].available).toBe(true);
     expect(courts).toEqual([]);
+  });
+
+  it("parses the new date-prefixed time rows", () => {
+    const parsed = parseOlympicTimeSlotElements([
+      { text: "9월 28일(08:00~09:00) 신청가능", className: "available" },
+      { text: "9월 28일(09:00~10:00) 신청마감", className: "closed" }
+    ], { date: "2026-09-28", courtType: "outdoor" });
+
+    expect(parsed).toMatchObject([
+      { time: "08:00~09:00", available: true },
+      { time: "09:00~10:00", available: false }
+    ]);
+  });
+
+  it("prefers the exact new UI row over a containing list", () => {
+    const parsed = parseOlympicTimeSlotElements([
+      { text: "06:00~07:00 신청가능 07:00~08:00 신청마감", className: "time-list" },
+      { text: "07:00~08:00 신청마감", className: "closed" },
+      { text: "06:00~07:00 신청가능", className: "available" }
+    ], { date: "2026-09-28", courtType: "outdoor" });
+
+    expect(parsed).toMatchObject([
+      { time: "06:00~07:00", available: true },
+      { time: "07:00~08:00", available: false }
+    ]);
   });
 
   it("matches selected Olympic time slots across court types", () => {
