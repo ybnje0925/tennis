@@ -435,13 +435,14 @@ function mergeProviderFailure(state, {
   for (const providerId of providerIds) finishProviderRuntime(state, providerId, checkedAt, error);
   updateAttemptedProviderSchedule(state, targetVenueIds, checkedAt);
   syncProviderSchedule(state, activeProviderIds, now);
+  const newlySkippedProviders = addSkipLogs(state, skippedProviders, now);
   addLog(state, buildCycleSummary({
     checked,
     activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders),
-    skippedProviders,
+    skippedProviders: newlySkippedProviders,
     vacancyCount: 0,
     alertCount: 0
-  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt }));
+  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -490,15 +491,16 @@ function mergeProviderSuccess(state, {
   updateAttemptedProviderSchedule(state, targetVenueIds, checkedAt);
   updateCheckedProviderSchedule(state, successfulVenueIds(targetVenueIds, checked), checkedAt);
   syncProviderSchedule(state, activeProviderIds, now);
+  const newlySkippedProviders = addSkipLogs(state, skippedProviders, now);
   addLog(state, buildCycleSummary({
     checked,
     activeVenueIds: summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders),
-    skippedProviders,
+    skippedProviders: newlySkippedProviders,
     vacancyCount,
     alertCount,
     alertFailureCount: notificationErrors.length,
     suppressedAlertCount
-  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders, checkedAt, notificationErrors }));
+  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt, notificationErrors }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -587,14 +589,15 @@ export async function runCheckCycle({
           }
         }
         if (skippedProviders.length > 0) {
-          addSkipLogs(latest, skippedProviders, now);
+          const newlySkippedProviders = addSkipLogs(latest, skippedProviders, now);
+          if (newlySkippedProviders.length === 0) return;
           addLog(latest, buildCycleSummary({
             checked: {},
             activeVenueIds,
-            skippedProviders,
+            skippedProviders: newlySkippedProviders,
             vacancyCount: 0,
             alertCount: 0
-          }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders, checkedAt: new Date().toISOString() }));
+          }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders: newlySkippedProviders, checkedAt: new Date().toISOString() }));
           finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
         }
       });
@@ -635,14 +638,15 @@ export async function runCheckCycle({
       await mutateState((latest) => {
         const latestContext = activeContextFor(latest);
         syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
-        addSkipLogs(latest, skippedProviders, now);
+        const newlySkippedProviders = addSkipLogs(latest, skippedProviders, now);
+        if (newlySkippedProviders.length === 0) return;
         addLog(latest, buildCycleSummary({
           checked: {},
           activeVenueIds,
-          skippedProviders,
+          skippedProviders: newlySkippedProviders,
           vacancyCount: 0,
           alertCount: 0
-        }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders, checkedAt: new Date().toISOString() }));
+        }), now, cycleLogDetails({ checked: {}, activeVenueIds, skippedProviders: newlySkippedProviders, checkedAt: new Date().toISOString() }));
         finishRunState(latest, now, activeVenueIds, {}, skippedProviders);
       });
       return { checkedAt: new Date().toISOString(), reservations: [], notifications: [], errors: [], skipped: true };
@@ -898,15 +902,26 @@ function summaryVenueIds(targetVenueIds, activeVenueIds, skippedProviders) {
 }
 
 function addSkipLogs(state, skippedProviders, now) {
+  state.system.providerSkipStates ||= {};
+  const currentSkipped = new Set(skippedProviders.map(({ provider }) => provider));
+  for (const provider of Object.keys(state.system.providerSkipStates)) {
+    if (!currentSkipped.has(provider)) state.system.providerSkipStates[provider] = false;
+  }
+
+  const newlySkippedProviders = [];
   for (const { provider, reason } of skippedProviders) {
-    if (provider !== "olympic" || reason !== "운영시간 외") continue;
-    addLog(state, `[올림픽공원] 조회 SKIP | 운영시간 외 (${outsideMonitoringHoursLabel(provider)})`, now, {
+    if (reason !== "운영시간 외") continue;
+    if (state.system.providerSkipStates[provider]) continue;
+    state.system.providerSkipStates[provider] = true;
+    newlySkippedProviders.push({ provider, reason });
+    addLog(state, `[${providerLabel(provider)}] 조회 SKIP | 운영시간 외 (${outsideMonitoringHoursLabel(provider)})`, now, {
       kind: "provider-skip",
       provider,
       providerName: providerLabel(provider),
       reason
     });
   }
+  return newlySkippedProviders;
 }
 
 function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {

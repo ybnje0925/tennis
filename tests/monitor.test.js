@@ -879,6 +879,18 @@ describe("runCheckCycle active watch targeting", () => {
     expect(summaryLog(current)).toContain("올림픽 SKIP(운영시간 외)");
   });
 
+  it("logs an outside-hours skip only once until the provider becomes active again", async () => {
+    const current = olympicState();
+    const runner = makeRunner(current, vi.fn(async () => ({ olympic: [] })));
+    const now = new Date("2026-08-25T23:30:00.000Z");
+
+    await runCheckCycle({ ...runner, now });
+    await runCheckCycle({ ...runner, now: new Date(now.getTime() + 60_000) });
+
+    expect(current.system.logs.filter((line) => line.includes("운영시간 외"))).toHaveLength(2);
+    expect(current.system.providerSkipStates.olympic).toBe(true);
+  });
+
   it("checks Olympic during monitoring hours", async () => {
     const current = olympicState();
     const checker = vi.fn(async ({ watches }) => {

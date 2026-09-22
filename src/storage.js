@@ -30,6 +30,7 @@ const initialState = {
     lastManualCheckAt: null,
     venues: {},
     providers: {},
+    providerSkipStates: {},
     logs: [],
     logIds: [],
     logDetails: []
@@ -363,6 +364,7 @@ function normalizeState(raw) {
   state.sentNotifications = state.sentNotifications || {};
   state.system.venues = state.system.venues || {};
   state.system.providers = state.system.providers || {};
+  state.system.providerSkipStates = state.system.providerSkipStates || {};
   state.system.lastRunAt ||= state.system.lastCheckedAt || null;
   state.system.nextRunAt ||= state.system.nextCheckAt || null;
   state.system.lastRun ||= null;
