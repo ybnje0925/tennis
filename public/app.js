@@ -795,6 +795,9 @@ function renderTimeSlots(slots) {
 watchesEl.addEventListener("click", async (event) => {
   const deleteId = event.target?.dataset?.delete;
   const toggleId = event.target?.dataset?.toggle;
+  // 그룹/알림 카드의 summary는 native <details>가 접히고 펼쳐지는 동작을
+  // 그대로 처리해야 한다. 실제 액션 버튼을 누른 경우에만 목록을 다시 그린다.
+  if (!deleteId && !toggleId) return;
   if (deleteId) {
     await request(`/api/watches/${deleteId}`, { method: "DELETE" });
   }
