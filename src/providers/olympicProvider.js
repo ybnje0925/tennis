@@ -185,18 +185,38 @@ export async function getAuthenticatedOlympicPage(options = {}) {
 
 export async function openOlympicReservationPage(page, options = {}) {
   const timer = options.timer;
+  if (isOlympicReservationUrl(page) && await hasOlympicCalendarContent(page)) {
+    await maybeStep(timer, "예약 달력 확인", () => waitForOlympicCalendar(page));
+    return;
+  }
+
   await maybeStep(timer, "예약페이지 접근", async () => {
     await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
     const reservationLink = page.locator("a.btn_app:visible, a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
-      reservationLink.click({ timeout: 10_000 })
-    ]);
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-    await waitForOlympicCalendar(page).catch(() => {});
+    await reservationLink.click({ timeout: 15_000 });
+    await waitForOlympicCalendar(page);
   });
+}
+
+function isOlympicReservationUrl(page) {
+  try {
+    return new URL(page.url()).pathname.endsWith("/resrvtn_aplictn.do");
+  } catch {
+    return false;
+  }
+}
+
+async function hasOlympicCalendarContent(page) {
+  try {
+    return await page.evaluate(() => {
+      const text = document.body.innerText || "";
+      const hasCounts = ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
+      return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCounts;
+    });
+  } catch {
+    return false;
+  }
 }
 
 export async function selectCourtType(page, courtType, options = {}) {
