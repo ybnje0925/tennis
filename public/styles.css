@@ -55,3 +55,146 @@ button { min-height: 42px; border: 1px solid #9bb79f; border-radius: 6px; backgr
 .logs { display: grid; gap: 8px; max-height: 300px; overflow: auto; padding: 12px; color: #3f5a44; font-size: 14px; }.log-line, .log-entry { padding-bottom: 8px; border-bottom: 1px solid #edf2ec; }.log-entry { border-radius: 6px; }.log-entry summary { min-height: 34px; padding: 6px 8px; border-radius: 6px; cursor: pointer; list-style-position: inside; }.log-entry summary:hover, .log-entry summary:focus-visible { background: #f1f6f0; outline: none; }.log-entry.has-error summary { color: #8a3b24; font-weight: 700; }.log-detail { display: grid; gap: 10px; margin: 2px 0 10px; padding: 10px 12px; border: 1px solid #edf2ec; border-radius: 6px; background: #fbfcfb; color: #29372c; }.log-detail-block { display: grid; gap: 6px; }.log-detail h3 { margin: 0; color: #617064; font-size: 13px; }.log-detail p { margin: 0; overflow-wrap: anywhere; }.log-detail-grid { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 4px 10px; margin: 0; padding: 8px; border: 1px solid #edf2ec; border-radius: 6px; background: #fff; }.log-detail-grid dt { color: #617064; font-weight: 700; }.log-detail-grid dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }.build-info { margin-top: 10px; color: #7c8a80; font-size: 12px; }.empty { color: #617168; }
 
 @media (max-width: 620px) { .app { padding: 20px 14px 44px; }.app-header { min-height: 145px; padding: 6px 4px 22px; }.header-message { display: none; }.brand-copy { font-size: 15px; }.hero-message { margin: 16px 4px 24px; }.hero-message h2 { font-size: 36px; }.hero-message p { font-size: 17px; }.monitoring-card { grid-template-columns: 1fr; gap: 16px; padding: 18px; }.monitoring-timing { padding: 14px 0 0; border-top: 1px solid #bdd7c2; border-left: 0; }.monitoring-state strong, .monitoring-timing strong { font-size: 17px; }.overview-card { min-height: 90px; padding: 14px; }.overview-icon { width: 42px; height: 42px; flex-basis: 42px; font-size: 18px; }.overview-card strong { font-size: 32px; }.new-watch-button { min-height: 100px; margin-bottom: 30px; font-size: 21px; }.section-heading, .form-heading { align-items: flex-start; flex-direction: column; gap: 6px; }.watch-summary { grid-template-columns: 1fr; gap: 14px; padding: 18px; }.watch-main { grid-template-columns: 1fr; gap: 14px; }.watch-date { display: flex; align-items: baseline; gap: 8px; padding: 0; border: 0; }.watch-date span { margin: 0; }.watch-summary-side { grid-template-columns: auto auto 10px; min-width: 0; padding: 12px 0 0; border-top: 1px solid #d7e1d8; border-left: 0; }.watch-expanded { align-items: flex-start; flex-direction: column; padding: 0 18px 18px; }.watch-actions { justify-content: flex-end; }.telegram-status { grid-template-columns: auto minmax(0, 1fr); padding: 16px; }.telegram-status button { grid-column: 1 / -1; width: 100%; }.venue-groups, .slot-grid { grid-template-columns: 1fr; }.catalog-summary, .catalog-filters { grid-template-columns: 1fr; }.provider-status-grid { grid-template-columns: 1fr; }.telegram-connect { align-items: flex-start; flex-direction: column; } }
+
+/* Brand refresh: a warm, editorial tennis-club visual language. */
+:root {
+  --ink: #073f2d;
+  --ink-soft: #456254;
+  --court: #087348;
+  --court-dark: #045838;
+  --lime: #c3d733;
+  --paper: #fbfaf2;
+  --paper-deep: #f2f4e8;
+  --line: #d8e1d4;
+  font-family: "Pretendard", "Noto Sans KR", Inter, system-ui, sans-serif;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 3%, rgba(195, 215, 51, .18), transparent 25rem),
+    linear-gradient(180deg, #f5f7ee 0%, #fbfaf2 35%, #f4f6ee 100%);
+  color: var(--ink);
+}
+
+.app { width: min(960px, 100%); padding: 24px 24px 80px; }
+.panel, .watch, .monitoring-card, .overview-card, .provider-status-grid > div, .logs {
+  border-color: var(--line);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(23, 72, 49, .055);
+}
+
+.app-header {
+  position: relative;
+  isolation: isolate;
+  min-height: 270px;
+  overflow: hidden;
+  align-items: flex-start;
+  padding: 34px 38px 36px;
+  border: 1px solid #e0e6d6;
+  border-radius: 28px;
+  background: linear-gradient(112deg, #fffef8 0%, #fffef9 48%, #edf4e7 100%);
+  box-shadow: 0 16px 36px rgba(36, 85, 52, .08);
+}
+
+.app-header::before {
+  position: absolute;
+  z-index: -1;
+  right: -5%;
+  bottom: -42%;
+  width: 62%;
+  height: 86%;
+  border: 2px solid rgba(117, 164, 111, .22);
+  background:
+    linear-gradient(90deg, transparent 49.4%, rgba(117, 164, 111, .2) 49.6%, rgba(117, 164, 111, .2) 50.4%, transparent 50.6%),
+    linear-gradient(0deg, transparent 49.4%, rgba(117, 164, 111, .2) 49.6%, rgba(117, 164, 111, .2) 50.4%, transparent 50.6%),
+    repeating-linear-gradient(150deg, transparent 0 34px, rgba(117, 164, 111, .15) 35px 36px, transparent 37px 70px);
+  border-radius: 50% 50% 0 0;
+  transform: perspective(500px) rotateX(48deg) rotateZ(-7deg);
+}
+
+.app-header::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: 8%;
+  top: 17%;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #edf4ba 0 8%, transparent 9%), repeating-linear-gradient(72deg, #b9cf32 0 2px, #d6e56b 3px 5px, #abc52a 6px 8px);
+  box-shadow: 0 12px 18px rgba(43, 92, 49, .14);
+  transform: rotate(-18deg);
+}
+
+.brand-lockup { position: relative; z-index: 1; max-width: 64%; }
+.brand-lockup::before { content: "테니스 생활 · 예시 데이터"; display: block; margin-bottom: 20px; color: #87958b; font-size: 12px; font-weight: 700; letter-spacing: .08em; }
+.brand-lockup h1 { margin: 0 0 10px; color: var(--ink); font-size: clamp(32px, 5vw, 53px); font-weight: 900; letter-spacing: -.07em; }
+.brand-lockup h1 span { width: .58em; height: .58em; border: 0; background: var(--lime); color: transparent; box-shadow: inset -3px -3px 0 rgba(87, 125, 23, .18); }
+.brand-copy { color: var(--ink-soft); font-size: 18px; font-weight: 600; }
+.header-message { align-self: flex-start; position: relative; z-index: 1; margin: 12px 0 0 auto; color: var(--ink-soft); font-size: 15px; font-weight: 700; line-height: 1.35; text-align: left; }
+
+.hero-message { margin: 42px 6px 30px; }
+.hero-message h2 { max-width: 620px; color: var(--ink); font-size: clamp(40px, 7vw, 72px); font-weight: 900; letter-spacing: -.08em; }
+.hero-message p { margin-top: 14px; color: #657469; font-size: 19px; font-weight: 600; }
+
+.monitoring-card { margin: 24px 0 16px; padding: 22px 28px; border-color: #bfddc1; background: linear-gradient(135deg, #f0f9ee, #f9fbf1); }
+.status-dot { background: var(--court); box-shadow: 0 0 0 7px #d9efd7; }
+.monitoring-state strong, .monitoring-timing strong { color: var(--ink); font-size: 19px; }
+.monitoring-state p, .monitoring-timing p { color: #617368; }
+
+.overview-grid { gap: 16px; }
+.overview-card { min-height: 116px; padding: 20px 24px; background: rgba(255, 255, 252, .76); }
+.overview-icon { width: 52px; height: 52px; flex-basis: 52px; background: #edf4ca; color: var(--court-dark); }
+.overview-card span:not(.overview-icon) { color: #66766b; font-size: 14px; }
+.overview-card strong { color: var(--ink); font-size: 42px; }
+
+.new-watch-button { min-height: 118px; margin: 20px 0 46px; border-radius: 18px; background: var(--court); box-shadow: 0 12px 22px rgba(8, 115, 72, .18); }
+.new-watch-button:hover, .new-watch-button:focus-visible { background: var(--court-dark); }
+
+.section-heading { margin: 0 6px 16px; }
+.section-heading h2 { color: var(--ink); font-size: 28px; font-weight: 900; letter-spacing: -.04em; }
+.eyebrow { color: #809087; font-size: 11px; letter-spacing: .14em; }
+.section-heading > p, .form-heading > p { color: #738177; }
+.watch-list { gap: 14px; }
+.watch-group { border-color: var(--line); border-radius: 16px; box-shadow: 0 6px 18px rgba(23, 72, 49, .04); }
+.watch-group > summary { min-height: 68px; padding: 14px 22px; background: rgba(255,255,255,.64); }
+.watch-group-count { color: var(--court); }
+.watch-group-items { padding: 10px; border-top-color: #e5ebdf; }
+.watch { border-radius: 14px; box-shadow: none; }
+.watch-summary { min-height: 128px; }
+.watch-state, .watch-state-label { color: var(--court); }
+.watch-meta span { background: #eef5e7; color: var(--court-dark); }
+
+.telegram-status, .telegram-connect { border-radius: 16px; box-shadow: 0 8px 20px rgba(23, 72, 49, .05); }
+.telegram-status { border-color: #bedcc4; background: #f1f9ed; }
+.telegram-connect { border-color: #c7dfc1; background: #f3f9ee; }
+.telegram-status button, .telegram-connect button { border-radius: 10px; }
+
+.watch-form-panel { margin-top: 32px; padding: 28px; border-radius: 20px; background: rgba(255,255,252,.86); }
+.form-heading { margin-bottom: 28px; }
+legend, .date-field > span { color: var(--ink); }
+.venue-group, .slot-grid label, .catalog-summary div, .seoul-place { border-color: #e0e8dc; border-radius: 12px; background: #fbfcf5; }
+input[type="date"], input[type="text"], select { border-color: #cbd9c9; border-radius: 10px; background: #fffefb; }
+button { border-radius: 10px; }
+button.primary { border-radius: 12px; background: var(--court); }
+button.primary:hover { background: var(--court-dark); }
+
+.collapsible-section, .provider-status-section { margin-top: 54px; }
+.provider-status-grid > div { min-height: 126px; padding: 18px; background: rgba(255,255,252,.76); }
+.logs { padding: 16px; background: rgba(255,255,252,.76); }
+
+@media (max-width: 620px) {
+  .app { padding: 16px 14px 52px; }
+  .app-header { min-height: 248px; padding: 26px 24px; border-radius: 22px; }
+  .brand-lockup { max-width: 80%; }
+  .brand-lockup::before { margin-bottom: 14px; font-size: 10px; }
+  .brand-lockup h1 { font-size: 35px; }
+  .brand-copy { font-size: 15px; }
+  .header-message { display: block; position: absolute; right: 24px; bottom: 26px; font-size: 12px; }
+  .app-header::after { right: -12%; top: 14%; width: 62px; height: 62px; }
+  .hero-message { margin: 34px 4px 24px; }
+  .hero-message h2 { font-size: 43px; }
+  .hero-message p { font-size: 16px; }
+  .watch-form-panel { padding: 22px 18px; }
+}
