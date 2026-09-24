@@ -62,6 +62,11 @@ async function createOlympicSession(options = {}) {
         stepLabel: "브라우저 실행"
       }
     );
+    await context.route("**/*", (route) => {
+      const resourceType = route.request().resourceType();
+      if (["image", "media", "font"].includes(resourceType)) return route.abort();
+      return route.continue();
+    });
     console.info(`[Olympic] browser started | profile=${SESSION_DIR}`);
 
     const page = context.pages()[0] || await context.newPage();

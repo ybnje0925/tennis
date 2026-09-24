@@ -64,8 +64,8 @@ Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬
 
 ## 동작 방식
 
-1. 비올림픽 Provider는 cookie session을 보존하는 HTTP 요청으로 로그인/예약 HTML을 조회합니다.
-2. HTTP 조회가 실패하면 `LEGACY_HTTP_FALLBACK=true`일 때 기존 Playwright 경로로 재시도합니다.
+1. 강동은 cookie session을 보존하는 HTTP 요청으로 로그인/예약 HTML을 조회합니다.
+2. 강동 HTTP 조회가 실패하면 `LEGACY_HTTP_FALLBACK=true`일 때 기존 Playwright 경로로 재시도합니다. 송파는 기본적으로 Playwright로 직접 조회하며, HTTP 경로는 `SONGPA_HTTP_ENABLED=true`로 명시적으로 켤 수 있습니다.
 3. 올림픽 Provider는 Playwright Chromium persistent context를 사용합니다.
 4. 날짜, 시간대, 예약가능 여부, 가능 코트 수를 표준 데이터로 정규화합니다.
 5. provider별 조회주기에 맞춰 현황을 조회하고 저장된 알림 조건과 비교합니다.
@@ -229,6 +229,7 @@ OLYMPIC_POLLING_MINUTES=5
 ```text
 SONGPA_USER_ID = 실제 송파 아이디
 SONGPA_USER_PASSWORD = 실제 송파 비밀번호
+SONGPA_HTTP_ENABLED = false
 ```
 
 기존 `GANGDONG_USER_ID`, `GANGDONG_USER_PASSWORD`, `OLYMPIC_USER_ID`, `OLYMPIC_USER_PASSWORD`와 독립적으로 관리합니다.

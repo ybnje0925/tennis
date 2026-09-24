@@ -16,6 +16,7 @@ ENV SESSION_DIR=/data/sessions
 # in the image because the Olympic provider is intentionally still enabled.
 ENV LEGACY_HTTP_ENABLED=true
 ENV LEGACY_HTTP_FALLBACK=true
+ENV SONGPA_HTTP_ENABLED=false
 ENV ENABLE_OLYMPIC_PROVIDER=true
 
 EXPOSE 3000

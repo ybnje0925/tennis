@@ -38,6 +38,11 @@ export async function openSongpaSession(options = {}) {
     }
   );
   const page = context.pages()[0] || await context.newPage();
+  await context.route("**/*", (route) => {
+    const resourceType = route.request().resourceType();
+    if (["image", "media", "font"].includes(resourceType)) return route.abort();
+    return route.continue();
+  });
   page.setDefaultTimeout(20_000);
   page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
   return { context, page };
@@ -82,7 +87,7 @@ export async function ensureSongpaLoggedIn(page, options = {}) {
 }
 
 export async function checkSongpaVenues(venueIds, options = {}) {
-  if (config.legacyHttpEnabled) {
+  if (config.songpaHttpEnabled) {
     try {
       return await checkSongpaVenuesHttp(venueIds, options);
     } catch (error) {

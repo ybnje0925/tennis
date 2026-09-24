@@ -37,6 +37,7 @@ export const config = {
   enableOlympicProvider: bool(process.env.ENABLE_OLYMPIC_PROVIDER, true),
   legacyHttpEnabled: bool(process.env.LEGACY_HTTP_ENABLED, true),
   legacyHttpFallback: bool(process.env.LEGACY_HTTP_FALLBACK, true),
+  songpaHttpEnabled: bool(process.env.SONGPA_HTTP_ENABLED, false),
   headless: bool(process.env.HEADLESS, true),
   port: int(process.env.PORT, 3000),
   checkIntervalMinutes: parsePollingMinutes(process.env.CHECK_INTERVAL_MINUTES, defaultPollingMinutes),
