@@ -143,7 +143,7 @@ app.get("/health", (req, res) => {
 
 app.get("/api/options", requireUser, (req, res) => {
   res.json({
-    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl }) => ({ id, name, provider, slotMinutes, publicUrl })),
+    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl, region }) => ({ id, name, provider, slotMinutes, publicUrl, region: region || ({ gangdong: "서울 강동구", songpa: "서울 송파구", olympic: "서울 송파구", hanam: "경기 하남시" })[provider] })),
     venueGroups: {
       seasonal: Object.values(VENUES).filter(venue => venue.seasonalSlots),
       twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl })),

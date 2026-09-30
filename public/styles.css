@@ -175,3 +175,13 @@ button.primary:hover { background: var(--court-dark); }
   .hero-message p { font-size: 16px; }
   .watch-form-panel { padding: 22px 18px; }
 }
+
+/* Keep region cards and their rows compact regardless of neighbouring height. */
+.venue-groups { align-items: start; gap: 16px; }
+.venue-group { align-content: start; gap: 14px; }
+.venue-group-title { margin: 0; color: var(--ink, #20362a); font-size: 15px; }
+.venue-duration-group { display: grid; gap: 4px; align-content: start; }
+.venue-duration-group + .venue-duration-group { border-top: 1px solid #e0e8dc; padding-top: 12px; }
+.venue-duration-title { margin-bottom: 4px; color: #617168; font-size: 12px; font-weight: 700; }
+.venue-option { align-items: center; min-height: 32px; }
+.venue-option input { flex: 0 0 auto; }

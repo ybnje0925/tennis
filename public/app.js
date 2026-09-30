@@ -57,7 +57,6 @@ const seoulPlacesEl = document.querySelector("#seoulPlaces");
 let gangdongTimeSlots = [];
 let olympicTimeSlots = [];
 let oneHourTimeSlots = [];
-let venueGroups = { twoHour: [], oneHour: [] };
 let venueOptions = [];
 let venueNames = {};
 let venuePublicUrls = {};
@@ -137,7 +136,6 @@ async function loadOptions() {
   gangdongTimeSlots = options.timeSlots;
   olympicTimeSlots = options.olympicTimeSlots;
   oneHourTimeSlots = options.oneHourTimeSlots || options.olympicTimeSlots;
-  venueGroups = options.venueGroups;
   venueOptions = options.venues;
   venueNames = Object.fromEntries(venueOptions.map((venue) => [venue.id, venue.name]));
   venuePublicUrls = Object.fromEntries(venueOptions.map((venue) => [venue.id, venue.publicUrl]));
@@ -775,26 +773,23 @@ function updateVenueSelection() {
 }
 
 function renderVenueGroups() {
-  venueGroupsEl.innerHTML = [
-    renderVenueGroup("서울 중랑구 · 계절별 회차", venueGroups.seasonal || []),
-    renderVenueGroup("2시간 예약", venueGroups.twoHour || []),
-    renderVenueGroup("1시간 예약", venueGroups.oneHour || [])
-  ].join("");
-}
-
-function renderVenueGroup(title, venues) {
-  return `
-    <div class="venue-group">
-      <div class="venue-group-title">${title}</div>
-      ${venues.map((venue) => `
-        <label class="venue-option">
+  const regions = ["서울 강동구", "서울 송파구", "서울 중랑구", "경기 하남시"];
+  venueGroupsEl.innerHTML = regions.map(region => {
+    const venues = venueOptions.filter(venue => venue.region === region);
+    if (!venues.length) return "";
+    const durations = [60, 120, null];
+    const sections = durations.map(minutes => {
+      const matches = venues.filter(venue => venue.slotMinutes === minutes);
+      if (!matches.length) return "";
+      const title = minutes ? minutes / 60 + "시간 예약" : "이용시간은 날짜 선택 후 확인";
+      return `<div class="venue-duration-group"><div class="venue-duration-title">${title}</div>
+        ${matches.map(venue => `<label class="venue-option">
           <input type="checkbox" name="venues" value="${venue.id}" data-slot-minutes="${venue.slotMinutes}" />
           <span class="venue-name">${venue.name}</span>
-          <span class="venue-unit">${venue.id === "myeonmok" ? "(계절별 회차)" : "(" + venue.slotMinutes / 60 + "시간)"}</span>
-        </label>
-      `).join("")}
-    </div>
-  `;
+        </label>`).join("")}</div>`;
+    }).join("");
+    return `<section class="venue-group"><h3 class="venue-group-title">${region}</h3>${sections}</section>`;
+  }).join("");
 }
 
 function getSelectedSlotMinutes(selectedVenueIds) {
