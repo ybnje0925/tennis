@@ -4,6 +4,9 @@ import crypto from "node:crypto";
 import { config } from "./config.js";
 import { normalizeDate, normalizeTimeSlot } from "./normalization.js";
 
+import { myeonmokSlots } from "../public/myeonmokSlots.js";
+import { validateVenueSelection } from "./venueRules.js";
+
 import { recordEvent } from './analytics.js';
 
 const DATA_DIR = path.resolve(config.dataDir);
@@ -78,7 +81,16 @@ function serializeStateWrite(operation) {
   return running;
 }
 
+function validateSeasonalWatch(input) {
+  if (!(input.venues || []).includes("myeonmok")) return;
+  const selected = validateVenueSelection(input.venues);
+  if (!selected.ok) throw new Error(selected.message);
+  const slots = myeonmokSlots(input.date);
+  if (!slots.length || !Array.isArray(input.times) || !input.times.length || input.times.some(time => !slots.includes(time))) throw new Error("면목 이용 날짜에 운영하는 회차와 실제 이용시간을 선택하세요.");
+}
+
 export async function addWatch(input) {
+  validateSeasonalWatch(input);
   return updateState((state) => {
     const watch = {
       id: crypto.randomUUID(),
@@ -115,6 +127,12 @@ export async function updateWatch(id, patch, userId = null) {
     const watch = state.watches.find((item) => item.id === id);
     if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
     if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
+    if (["venues", "date", "times"].some(field => field in patch) && ((watch.venues || []).includes("myeonmok") || (patch.venues || []).includes("myeonmok"))) {
+      const candidate = { ...watch, ...patch };
+      if (!candidate.venues?.includes("myeonmok")) throw new Error("다른 시설은 새 알림 조건으로 등록하세요.");
+      validateSeasonalWatch(candidate);
+      watch.venues = candidate.venues; watch.date = candidate.date; watch.times = candidate.times; watch.provider = "jungnang";
+    }
     if (typeof patch.enabled === "boolean" && watch.enabled !== patch.enabled) {
       watch.enabled = patch.enabled;
       recordEvent(state, patch.enabled ? 'watch_enabled' : 'watch_disabled', { userId: watch.userId, watchId: watch.id, venues: watch.venues });

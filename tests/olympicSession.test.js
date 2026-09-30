@@ -112,7 +112,7 @@ describe("Olympic session reuse and login locking", () => {
   it("keeps one Olympic context per process", async () => {
     const { openOlympicSession } = await importProvider();
     const fake = createPage();
-    const context = { pages: () => [fake.page], close: vi.fn() };
+    const context = { pages: () => [fake.page], route: vi.fn(async () => {}), close: vi.fn() };
     launchPersistentContext.mockResolvedValue(context);
 
     const first = await openOlympicSession();
@@ -138,9 +138,9 @@ describe("Olympic session reuse and login locking", () => {
   it("restores the persistent session after context close", async () => {
     const { openOlympicSession } = await importProvider();
     const fake1 = createPage();
-    const context1 = { pages: () => [fake1.page], close: vi.fn() };
+    const context1 = { pages: () => [fake1.page], route: vi.fn(async () => {}), close: vi.fn() };
     const fake2 = createPage();
-    const context2 = { pages: () => [fake2.page], close: vi.fn() };
+    const context2 = { pages: () => [fake2.page], route: vi.fn(async () => {}), close: vi.fn() };
     launchPersistentContext.mockResolvedValueOnce(context1).mockResolvedValueOnce(context2);
 
     const first = await openOlympicSession();
@@ -155,7 +155,7 @@ describe("Olympic session reuse and login locking", () => {
   it("logs browser lifecycle events while keeping the persistent profile", async () => {
     const { openOlympicSession } = await importProvider();
     const fake = createPage();
-    const context = { pages: () => [fake.page], close: vi.fn(async () => {}) };
+    const context = { pages: () => [fake.page], route: vi.fn(async () => {}), close: vi.fn(async () => {}) };
     launchPersistentContext.mockResolvedValue(context);
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
 

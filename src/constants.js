@@ -1,6 +1,12 @@
 import { config } from "./config.js";
 
 export const VENUES = {
+  myeonmok: {
+    id: "myeonmok", name: "면목구립테니스장", region: "서울 중랑구",
+    url: "https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php",
+    publicUrl: "https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php",
+    provider: "jungnang", slotMinutes: null, seasonalSlots: true
+  },
   gangil: {
     id: "gangil",
     name: "강일테니스장",
@@ -128,6 +134,11 @@ export const OLYMPIC_HOME_URL = "https://www.ksponco.or.kr/online/tennis/index.d
 export const OLYMPIC_RESERVATION_URL = "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do";
 
 export const PROVIDERS = {
+  jungnang: {
+    id: "jungnang", name: "서울 중랑구 · 면목구립테니스장",
+    pollingMinutes: 5, publicUrl: "https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php",
+    supportsCourtNumber: false, supportsContinuousSlots: false, venues: ["myeonmok"]
+  },
   gangdong: {
     id: "gangdong",
     name: "강동구 테니스장",

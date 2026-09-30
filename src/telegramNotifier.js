@@ -105,6 +105,7 @@ export function buildTelegramConnectionTestMessage() {
 }
 
 export function buildAvailabilityMessage(item) {
+  if (item.provider === "jungnang") return buildMyeonmokMessage([item]);
   if (item.provider === "hanam") return buildHanamAvailabilityMessage(item);
   if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);
 
@@ -148,6 +149,7 @@ export function buildAggregatedAvailabilityMessage(items) {
   if (!Array.isArray(items) || items.length === 0) return "";
   if (items.length === 1) return buildAvailabilityMessage(items[0]);
 
+  if (items[0].provider === "jungnang") return buildMyeonmokMessage(items);
   const first = items[0];
   const venue = VENUES[first.venue];
   const lines = items
@@ -194,4 +196,14 @@ export function buildOlympicAvailabilityMessage(item) {
 export async function sendAvailabilityAlert(item) {
   const venue = VENUES[item.venue];
   return sendTelegramMessage(buildAvailabilityMessage(item), { url: venue?.url });
+}
+
+export function buildMyeonmokMessage(items) {
+  const sorted = items.slice().sort((a,b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+  return ["🎾 테니스 잡아줘", "", "면목구립테니스장 빈자리 발견!",
+    ...sorted.flatMap(item => [formatKoreanDateWithWeekday(item.date),
+      item.part + "부 " + item.time + " · 잔여 " + item.availableCount + "팀",
+      item.warning || null]),
+    "", "실제 신청 가능 여부는 공식 사이트에서 확인",
+    VENUES.myeonmok.publicUrl].filter(Boolean).join("\n");
 }

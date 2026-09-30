@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { CookieSession } from "./httpSession.js";
 import { parseLegacyCalendarHtml } from "./legacyHttpParser.js";
 
+import { checkMyeonmokVenues } from "./providers/myeonmokProvider.js";
+
 const providerLocks = new Map();
 export const CHECK_META = Symbol.for("tennis.checkMeta");
 
@@ -433,6 +435,7 @@ export async function checkAllVenues(options = {}) {
   const meta = { errors: [] };
   const olympicWatches = watches.filter(isOlympicWatch);
   const providerChecks = [
+    safeProviderCheck("jungnang", () => checkMyeonmokVenues(watches.length ? Array.from(watchedVenueIds) : [], { venueDates })),
     safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
     safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
     safeProviderCheck("hanam", () => checkHanamVenues(hanamVenueIdsFromWatches(watches), { venueDates, watches })),
@@ -440,8 +443,10 @@ export async function checkAllVenues(options = {}) {
       ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])
   ];
-  const [gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);
+  const [jungnang, gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);
 
+  Object.assign(result, stripCheckMeta(jungnang));
+  meta.errors.push(...getCheckErrors(jungnang));
   Object.assign(result, stripCheckMeta(gangdong));
   meta.errors.push(...getCheckErrors(gangdong));
   Object.assign(result, stripCheckMeta(songpa));

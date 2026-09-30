@@ -1,4 +1,5 @@
 import { formatKoreanDateWithWeekday, isDateBeforeKstToday } from "./dateFormat.js";
+import { myeonmokSlots, myeonmokSlotLabel } from "./myeonmokSlots.js";
 import { sortWatchesByReservationTime } from "./watchSorting.js";
 
 const form = document.querySelector("#watchForm");
@@ -35,8 +36,10 @@ const gangilStatusEl = document.querySelector("#gangilStatus");
 const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
 const songpaStatusEl = document.querySelector("#songpaStatus");
+const jungnangStatusEl = document.querySelector("#jungnangStatus");
 const hanamStatusEl = document.querySelector("#hanamStatus");
 const reservationLinks = {
+  jungnang: document.querySelector("#jungnangLink"),
   gangil: document.querySelector("#gangilLink"),
   myeongil: document.querySelector("#myeongilLink"),
   olympic: document.querySelector("#olympicLink"),
@@ -121,6 +124,7 @@ function formatProviderStatus(status, providerId, active) {
   if (provider.status === "running") {
     return `${stateLabel} · ${formatDateTime(provider.lastStartedAt)} 시작`;
   }
+  if (providerId === "jungnang") return `${provider.lastError ? "조회 실패 · 이전 성공 결과" : stateLabel} · 시도 ${formatDateTime(provider.lastAttemptAt)} · 성공 ${formatDateTime(provider.lastSuccessfulCheckAt)} · 다음 ${formatDateTime(provider.nextCheckAt)}`;
   return `${stateLabel} · ${formatDateTime(provider.lastCheckedAt)} → ${formatDateTime(provider.nextCheckAt)}`;
 }
 
@@ -160,6 +164,7 @@ async function loadSession() {
 
 function updateReservationLinks() {
   const links = {
+    jungnang: providerPublicUrls.jungnang,
     gangil: venuePublicUrls.gangil,
     myeongil: venuePublicUrls.myeongil,
     olympic: venuePublicUrls.olympic,
@@ -200,6 +205,7 @@ async function loadStatus() {
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
+  jungnangStatusEl.textContent = formatProviderStatus(status, "jungnang", Boolean(status.activeVenues?.myeonmok));
   const activeWatchCount = displayActiveWatchCount ?? Number(status.currentUserActiveWatchCount || 0);
   const quietHoursActive = status.schedulerPolicy?.quietHoursActive;
   monitoringTitleEl.textContent = quietHoursActive ? "야간 절전 중" : activeWatchCount > 0 ? "모니터링 중" : "모니터링 대기 중";
@@ -346,7 +352,7 @@ function matchingLogDetail(line, logId, indexedDetail) {
     ? indexedDetail?.logId === logId ? indexedDetail : null
     : indexedDetail?.line === line ? indexedDetail : null;
   if (!detail) return null;
-  const labels = { gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
+  const labels = { jungnang: "중랑", gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
   return (detail.errors || []).every((error) => !error?.provider || line.includes(labels[error.provider] || error.provider)) ? detail : null;
 }
 
@@ -578,7 +584,7 @@ function renderWatches(watches) {
 function renderWatchCard(watch) {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const date = formatWatchDate(watch.date);
-      const timeLabels = watch.times.map((time) => `<span>${time}</span>`).join("");
+      const timeLabels = watch.times.map((time) => `<span>${watch.venues.includes("myeonmok") ? myeonmokSlotLabel(watch.date, time) : time}</span>`).join("");
       const expired = isExpiredWatchDate(watch.date);
       const state = expired ? "만료됨" : watch.enabled === false ? "일시정지" : "알림 켜짐";
       return `
@@ -603,6 +609,7 @@ function renderWatchCard(watch) {
           </summary>
           <div class="watch-expanded">
             <p>${expired ? "지난 날짜의 알림입니다. 필요하지 않다면 삭제해 주세요." : "알림 조건을 일시정지하거나 다시 켤 수 있어요."}</p>
+            ${renderMyeonmokResult(watch)}
             <div class="watch-actions">
               <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}" ${expired ? "disabled" : ""}>
                 ${watch.enabled === false ? "알림 켜기" : "일시정지"}
@@ -612,6 +619,14 @@ function renderWatchCard(watch) {
           </div>
         </details>
       `;
+}
+
+function renderMyeonmokResult(watch) {
+  if (!watch.venues.includes("myeonmok")) return "";
+  const result = watch.publicResult;
+  if (!result) return "<p>아직 조회하지 않았습니다.</p>";
+  const lines = (result.items || []).map(item => `<p>${item.part}부 ${item.time} · ${escapeHtml(item.status)} ${Number.isFinite(item.availableCount) ? "· 잔여 " + item.availableCount + "팀" : ""}${item.warning ? " · 확인 필요" : ""}</p>`).join("");
+  return `<p>${result.refreshing ? "조회 진행 중 · 이전 성공 결과" : result.stale ? "최신 조회 실패 · 이전 성공 결과" : "공개 현황"} · 마지막 시도 ${formatDateTime(result.lastAttemptAt)} · 마지막 성공 ${formatDateTime(result.lastSuccessAt)}</p>${lines}<p>실제 신청 가능 여부는 공식 사이트에서 확인</p><a href="https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php" target="_blank" rel="noopener noreferrer">공식 예약 페이지</a>`;
 }
 
 function formatWatchDate(value) {
@@ -739,10 +754,11 @@ form.addEventListener("change", () => {
 
 function updateVenueSelection() {
   const data = new FormData(form);
+  const seasonal = data.getAll("venues").includes("myeonmok");
   const selectedSlotMinutes = getSelectedSlotMinutes(data.getAll("venues"));
   for (const input of form.querySelectorAll("input[name='venues']")) {
     const slotMinutes = Number(input.dataset.slotMinutes);
-    input.disabled = Boolean(selectedSlotMinutes && slotMinutes !== selectedSlotMinutes && !input.checked);
+    input.disabled = !input.checked && (seasonal ? input.value !== "myeonmok" : Boolean(selectedSlotMinutes && slotMinutes !== selectedSlotMinutes));
   }
 
   if (selectedSlotMinutes === 120) {
@@ -753,12 +769,14 @@ function updateVenueSelection() {
     venueSelectionHelpEl.textContent = "";
   }
 
-  timeSlotsLegendEl.textContent = selectedSlotMinutes === 60 ? "1시간 단위 시간대" : "시간대";
-  renderTimeSlots(selectedSlotMinutes === 60 ? oneHourTimeSlots : gangdongTimeSlots);
+  timeSlotsLegendEl.textContent = seasonal ? "회차별 실제 이용시간" : selectedSlotMinutes === 60 ? "1시간 단위 시간대" : "시간대";
+  if (seasonal) venueSelectionHelpEl.textContent = "회차별 잔여 팀 수를 조회합니다. 실제 신청 가능 여부는 공식 사이트에서 확인";
+  renderTimeSlots(seasonal ? myeonmokSlots(data.get("date")) : selectedSlotMinutes === 60 ? oneHourTimeSlots : gangdongTimeSlots);
 }
 
 function renderVenueGroups() {
   venueGroupsEl.innerHTML = [
+    renderVenueGroup("서울 중랑구 · 계절별 회차", venueGroups.seasonal || []),
     renderVenueGroup("2시간 예약", venueGroups.twoHour || []),
     renderVenueGroup("1시간 예약", venueGroups.oneHour || [])
   ].join("");
@@ -772,7 +790,7 @@ function renderVenueGroup(title, venues) {
         <label class="venue-option">
           <input type="checkbox" name="venues" value="${venue.id}" data-slot-minutes="${venue.slotMinutes}" />
           <span class="venue-name">${venue.name}</span>
-          <span class="venue-unit">(${venue.slotMinutes / 60}시간)</span>
+          <span class="venue-unit">${venue.id === "myeonmok" ? "(계절별 회차)" : "(" + venue.slotMinutes / 60 + "시간)"}</span>
         </label>
       `).join("")}
     </div>
@@ -788,7 +806,7 @@ function getSelectedSlotMinutes(selectedVenueIds) {
 function renderTimeSlots(slots) {
   const selected = new Set(new FormData(form).getAll("times"));
   timeSlotsEl.innerHTML = slots
-    .map((slot) => `<label><input type="checkbox" name="times" value="${slot}" ${selected.has(slot) ? "checked" : ""} /> ${slot}</label>`)
+    .map((slot) => `<label><input type="checkbox" name="times" value="${slot}" ${selected.has(slot) ? "checked" : ""} /> ${new FormData(form).getAll("venues").includes("myeonmok") ? myeonmokSlotLabel(new FormData(form).get("date"), slot) : slot}</label>`)
     .join("");
 }
 
@@ -862,7 +880,7 @@ setInterval(async () => {
   if (currentUser) {
     const session = await loadSession();
     if (session.authenticated) {
-      renderWatches(displayedWatches);
+      await loadWatches();
       await loadStatus();
     }
   }

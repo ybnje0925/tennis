@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// These tests exercise browser navigation, independent of the production HTTP default.
+vi.mock("../src/config.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, config: { ...actual.config, legacyHttpEnabled: false } };
+});
 const openGangdongSession = vi.fn();
 const looksLikeProtectionOrLogin = vi.fn(async () => false);
 const checkHanamVenues = vi.fn(async () => ({}));

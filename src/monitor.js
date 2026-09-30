@@ -15,6 +15,7 @@ import {
   hanamKeyFor,
   isHanamWatch
 } from "./providers/hanamProvider.js";
+import { myeonmokSlots } from "../public/myeonmokSlots.js";
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 import { classifyError } from "./diagnostics.js";
 
@@ -28,6 +29,7 @@ export const SCHEDULER_VERSION = "provider-pending-v2";
 export const SCHEDULER_QUIET_HOURS = config.schedulerQuietHours;
 
 export function keyFor(item) {
+  if (item.provider === "jungnang" && item.part) return reservationKey({ ...item, time: myeonmokSlots(item.date)[item.part - 1] || item.time });
   if (item.provider === "olympic") return olympicKeyFor(item);
   if (item.provider === "hanam" && item.courtNo) return hanamKeyFor(item);
   return reservationKey(item);
@@ -471,9 +473,11 @@ function mergeProviderSuccess(state, {
     if (venueId === CHECK_META) continue;
     const count = checked[venueId]?.length ?? 0;
     state.system.venues[venueId] = { ok: count > 0, checkedAt, count };
+    if (venueId === "myeonmok") state.system.myeonmokSnapshot = { checkedAt, items: checked[venueId] };
   }
 
   for (const item of reservations) {
+    if (item.available == null) continue; // Unknown public state must preserve the last known transition.
     state.lastAvailability[keyFor(item)] = {
       provider: item.provider,
       venue: item.venue,
@@ -485,6 +489,7 @@ function mergeProviderSuccess(state, {
       endTime: item.endTime,
       available: item.available,
       availableCount: item.availableCount,
+      part: item.part, status: item.status, warning: item.warning, bookingMode: item.bookingMode,
       checkedAt
     };
   }
@@ -1040,7 +1045,7 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
   const parts = [allFailed ? "조회실패" : "조회완료"];
   const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
 
-  for (const providerId of ["gangdong", "songpa", "olympic", "hanam"]) {
+  for (const providerId of ["gangdong", "songpa", "olympic", "hanam", "jungnang"]) {
     if (!activeProviders.has(providerId)) continue;
     if (skipped.has(providerId)) {
       parts.push(`${providerLabel(providerId)} SKIP(${skipped.get(providerId)})`);
@@ -1070,6 +1075,7 @@ function providerLabel(providerId) {
   if (providerId === "songpa") return "송파";
   if (providerId === "olympic") return "올림픽";
   if (providerId === "hanam") return "하남";
+  if (providerId === "jungnang") return "중랑";
   return providerId;
 }
 

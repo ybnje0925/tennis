@@ -18,6 +18,9 @@ export function validateVenueSelection(venueIds) {
   const unknown = venueIds.find((venueId) => !VENUES[venueId]);
   if (unknown) return { ok: false, message: `알 수 없는 테니스장입니다: ${unknown}` };
 
+  if (venueIds.includes("myeonmok")) return venueIds.length === 1
+    ? { ok: true, slotMinutes: null }
+    : { ok: false, message: "면목구립테니스장은 계절별 회차 시설이므로 별도로 등록하세요." };
   const groups = getSelectedSlotMinuteGroups(venueIds);
   if (groups.length > 1) {
     return {
@@ -30,6 +33,7 @@ export function validateVenueSelection(venueIds) {
 }
 
 export function disabledVenueIdsForSelection(selectedVenueIds) {
+  if (selectedVenueIds.includes("myeonmok")) return Object.keys(VENUES).filter(id => id !== "myeonmok");
   const groups = getSelectedSlotMinuteGroups(selectedVenueIds);
   if (groups.length !== 1) return [];
   const selectedSlotMinutes = groups[0];

@@ -34,6 +34,7 @@ import {
   startScheduler,
   syncProviderSchedule
 } from "./monitor.js";
+import { myeonmokSlots } from "../public/myeonmokSlots.js";
 import { validateVenueSelection } from "./venueRules.js";
 import { buildInfo } from "./buildInfo.js";
 import { fetchSeoulTennisServices, filterSeoulTennisCatalog } from "./providers/seoulPublicProvider.js";
@@ -144,6 +145,7 @@ app.get("/api/options", requireUser, (req, res) => {
   res.json({
     venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl }) => ({ id, name, provider, slotMinutes, publicUrl })),
     venueGroups: {
+      seasonal: Object.values(VENUES).filter(venue => venue.seasonalSlots),
       twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl })),
       oneHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 60).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl }))
     },
@@ -246,7 +248,17 @@ app.post("/api/telegram/webhook", async (req, res, next) => {
 app.get("/api/watches", requireUser, async (req, res, next) => {
   try {
     const state = await loadState();
-    res.json(state.watches.filter((watch) => watch.userId === req.user.id));
+    res.json(state.watches.filter((watch) => watch.userId === req.user.id).map(watch => {
+      if (!watch.venues.includes("myeonmok")) return watch;
+      const provider = state.system.providers?.jungnang || {};
+      const snapshot = state.system.myeonmokSnapshot;
+      return { ...watch, publicResult: {
+        lastAttemptAt: provider.lastAttemptAt || null, lastSuccessAt: snapshot?.checkedAt || null,
+        stale: Boolean(provider.lastError || provider.status === "running" || provider.status === "pending"),
+        refreshing: provider.status === "running" || provider.status === "pending",
+        items: (snapshot?.items || []).filter(item => item.date === watch.date && watch.times.includes(myeonmokSlots(item.date)[item.part - 1] || item.time))
+      }};
+    }));
   } catch (error) {
     next(error);
   }
