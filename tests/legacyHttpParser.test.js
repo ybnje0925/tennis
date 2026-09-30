@@ -21,7 +21,7 @@ describe("legacy HTTP calendar parser", () => {
       </tr></table></div>`;
     const rows = parseLegacyCalendarHtml(html, "songpa-oryun", "songpa");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ date: "2026-09-16", available: true, availableCount: 1 });
+    expect(rows[0]).toMatchObject({ date: "2026-09-16", available: true, reservedCount: 1, totalCount: 3, availableCount: 2 });
     expect(rows[1].available).toBe(false);
   });
 });

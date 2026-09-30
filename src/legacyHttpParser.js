@@ -1,3 +1,4 @@
+import { parseSongpaCalendarHtml } from "./providers/songpaCalendar.js";
 import { VENUES } from "./constants.js";
 import { normalizeDate, normalizeTimeSlot, reservationKey } from "./normalization.js";
 
@@ -26,6 +27,7 @@ function parseCount(text) {
 }
 
 export function parseLegacyCalendarHtml(html, venueId, provider) {
+  if (provider === "songpa") return parseSongpaCalendarHtml(html, venueId);
   const venue = VENUES[venueId];
   if (!venue) throw new Error(`Unknown venue: ${venueId}`);
   const yearMonth = pageYearMonth(html);

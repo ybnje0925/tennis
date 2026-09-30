@@ -8,6 +8,9 @@ import { launchPersistentContext } from "../playwrightLauncher.js";
 import { CookieSession } from "../httpSession.js";
 import { parseLegacyCalendarHtml } from "../legacyHttpParser.js";
 
+import { parseSongpaCalendarSnapshot, parseSongpaSlotText, parseSongpaCalendarHtml } from "./songpaCalendar.js";
+export { parseSongpaCalendarSnapshot, parseSongpaSlotText, parseSongpaCalendarHtml } from "./songpaCalendar.js";
+
 const SESSION_DIR = path.resolve(config.sessionDir, "songpa-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
 const NAVIGATION_TIMEOUT_MS = 30_000;
@@ -130,7 +133,18 @@ async function checkSongpaVenuesHttp(venueIds, options = {}) {
       if (!response.ok || /로그인 후|아이디를 입력|비밀번호를 입력/.test(html) || !/calendar1_table/.test(html)) {
         throw new Error(`${VENUES[venueId].name} HTTP 인증/달력 응답이 아닙니다 (${response.status})`);
       }
-      items.push(...parseLegacyCalendarHtml(html, venueId, "songpa"));
+      const parsed = parseLegacyCalendarHtml(html, venueId, "songpa");
+      if (month && parsed.calendarMonth !== month) throw diagnosticError({
+        type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+        targetDate: dates.filter(date => date.startsWith(month)).join(", "), retryable: false,
+        message: "송파 HTTP 요청한 달이 표시되지 않았습니다: " + month
+      });
+      const missing = dates.filter(date => (!month || date.startsWith(month)) && !parsed.calendarDates.includes(date));
+      if (missing.length) throw diagnosticError({
+        type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+        targetDate: missing.join(", "), retryable: false, message: "송파 HTTP 날짜 셀을 찾지 못했습니다."
+      });
+      items.push(...parsed);
     }
     result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
   }
@@ -232,12 +246,33 @@ async function checkSongpaVenuesWithPlaywright(venueIds, options = {}) {
 }
 
 export async function checkSongpaVenue(page, venueId, options = {}) {
+  const dates = Array.from(new Set((options.dates || []).map(date => String(date)))).sort();
+  const months = dates.length ? Array.from(new Set(dates.map(date => date.slice(0, 7)))) : [null];
+  const results = [];
+  for (const month of months) {
+    const monthDates = dates.filter(date => date.slice(0, 7) === month);
+    const items = await checkSongpaVenueMonth(page, venueId, { ...options, dates: monthDates, targetMonth: month });
+    if (month && items.calendarMonth !== month) throw diagnosticError({
+      type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+      targetDate: monthDates.join(", "), retryable: false, message: "송파 요청한 달이 표시되지 않았습니다: " + month
+    });
+    const missing = monthDates.filter(date => !items.calendarDates?.includes(date));
+    if (missing.length) throw diagnosticError({
+      type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+      targetDate: missing.join(", "), retryable: false, message: "송파 날짜 셀을 찾지 못했습니다: " + missing.join(", ")
+    });
+    results.push(...items.filter(item => !dates.length || monthDates.includes(item.date)));
+  }
+  return results.sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+}
+
+async function checkSongpaVenueMonth(page, venueId, options = {}) {
   const venue = VENUES[venueId];
   if (!venue || venue.provider !== "songpa") throw new Error(`Unknown Songpa venue: ${venueId}`);
   const timer = options.timer;
 
   const response = await maybeStep(timer, `${venue.name} 페이지 접근`, async () => {
-    const navResponse = await page.goto(venue.url, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    const navResponse = await page.goto(options.targetMonth ? `${venue.url}?sch_sym=${encodeURIComponent(options.targetMonth)}` : venue.url, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
     return navResponse;
   }).catch((error) => {
@@ -267,7 +302,7 @@ export async function checkSongpaVenue(page, venueId, options = {}) {
   }
 
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  if (/로그인|아이디|비밀번호/.test(body) && !/로그아웃|마이페이지/.test(body)) {
+  if (/\/bbs\/login\.php/.test(typeof page.url === "function" ? page.url() : "") || (/로그인|아이디|비밀번호/.test(body) && !/로그아웃|마이페이지/.test(body))) {
     throw diagnosticError({
       type: "LOGIN_OR_PROTECTION_PAGE",
       stage: "AUTH_OR_PROTECTION",
@@ -304,111 +339,21 @@ export async function checkSongpaVenue(page, venueId, options = {}) {
       cause: error
     });
   });
-  if (reservations.length === 0) {
-    throw diagnosticError({
-      type: "PARSE_FAILED",
-      stage: "PARSE",
-      provider: "songpa",
-      venueId,
-      targetDate: options.dates?.join(", ") || null,
-      retryable: false,
-      message: `${venue.name} 예약현황 DOM에서 예약 데이터를 찾지 못했습니다.`,
-      details: await inspectSongpaPage(page, body)
-    });
-  }
   return reservations;
 }
 
 export async function parseSongpaReservationDom(page, venueId) {
-  const rows = await page.evaluate(() => {
-    const bodyText = document.body.innerText || "";
-    const yearMonth = bodyText.match(/(20\d{2})\s*\.\s*([01]?\d)/);
-    const cells = Array.from(document.querySelectorAll(".calendar1_table td, table td"));
-
-    return {
-      year: yearMonth?.[1] || "",
-      month: yearMonth?.[2] || "",
-      cells: cells.map((cell) => ({
-        text: (cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim(),
-        slots: Array.from(cell.querySelectorAll("li")).map((item) => ({
-          text: (item.innerText || item.textContent || "").replace(/\s+/g, " ").trim(),
-          href: item.querySelector("a")?.href || ""
-        }))
-      }))
-    };
+  if (typeof page.content === "function") return parseSongpaCalendarHtml(await page.content(), venueId);
+  const snapshot = await page.evaluate(() => {
+    const header = document.querySelector(".calendar1_yearmonth strong")?.textContent || "";
+    const ym = header.match(/(20\d{2})\s*\.\s*(\d{1,2})/);
+    return { year: ym?.[1], month: ym?.[2], cells: Array.from(document.querySelectorAll(".calendar1_table td")).map(cell => ({
+      day: cell.querySelector("h6")?.textContent?.trim(),
+      text: (cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim(),
+      slots: Array.from(cell.querySelectorAll("li")).map(li => ({ text: (li.innerText || li.textContent || "").replace(/\s+/g, " ").trim() }))
+    })) };
   });
-
-  return parseSongpaCalendarSnapshot(rows, venueId);
-}
-
-export function parseSongpaCalendarSnapshot(snapshot, venueId) {
-  const venue = VENUES[venueId];
-  if (!venue) throw new Error(`Unknown venue: ${venueId}`);
-
-  const year = snapshot.year;
-  const month = String(snapshot.month).padStart(2, "0");
-  if (!year || !snapshot.month) {
-    throw diagnosticError({
-      type: "PARSE_FAILED",
-      stage: "PARSE",
-      provider: "songpa",
-      venueId,
-      retryable: false,
-      message: `${venue.name} 달력 연월을 읽지 못했습니다.`
-    });
-  }
-
-  const results = [];
-  for (const cell of snapshot.cells || []) {
-    const day = cell.text.match(/^([0-3]?\d)\b/)?.[1];
-    if (!day) continue;
-
-    for (const slot of cell.slots || []) {
-      const parsed = parseSongpaSlotText(slot.text);
-      if (!parsed) continue;
-
-      results.push({
-        provider: "songpa",
-        venue: venue.id,
-        venueName: venue.name,
-        date: `${year}-${month}-${day.padStart(2, "0")}`,
-        startTime: parsed.startTime,
-        endTime: parsed.endTime,
-        time: `${parsed.startTime}~${parsed.endTime}`,
-        durationMinutes: 120,
-        available: parsed.available,
-        availableCount: parsed.availableCount,
-        totalCount: parsed.totalCount,
-        reservedCount: parsed.reservedCount,
-        rawStatus: slot.text
-      });
-    }
-  }
-
-  return results.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-}
-
-export function parseSongpaSlotText(text) {
-  const normalized = text.replace(/\s+/g, "");
-  const match = normalized.match(/([0-2]?\d:00)~([0-2]?\d:00)(예약가능|예약완료|예약불가)(?:\((\d+)\/(\d+)\))?/);
-  if (!match) return null;
-
-  const reservedCount = match[4] == null ? null : Number.parseInt(match[4], 10);
-  const totalCount = match[5] == null ? null : Number.parseInt(match[5], 10);
-  const available = match[3] === "예약가능";
-  const availableCount = available && Number.isFinite(reservedCount) && Number.isFinite(totalCount)
-    ? Math.max(0, totalCount - reservedCount)
-    : undefined;
-
-  return {
-    startTime: match[1].padStart(5, "0"),
-    endTime: match[2].padStart(5, "0"),
-    status: match[3],
-    available,
-    availableCount,
-    reservedCount,
-    totalCount
-  };
+  return parseSongpaCalendarSnapshot(snapshot, venueId);
 }
 
 export function songpaVenueIdsFromWatches(watches) {
