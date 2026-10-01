@@ -185,3 +185,12 @@ button.primary:hover { background: var(--court-dark); }
 .venue-duration-title { margin-bottom: 4px; color: #617168; font-size: 12px; font-weight: 700; }
 .venue-option { align-items: center; min-height: 32px; }
 .venue-option input { flex: 0 0 auto; }
+
+/* Keep provider details in the content column and controls readable. */
+.watch-expanded { flex-wrap: wrap; align-items: flex-start; }
+.watch-expanded-content { flex: 1 1 240px; min-width: 0; }
+.watch-public-result { display: grid; gap: 8px; margin-top: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.watch-public-result a { justify-self: start; word-break: keep-all; }
+.watch-actions { flex: 0 0 auto; margin-left: auto; }
+.watch-actions button { flex-shrink: 0; white-space: nowrap; }
+@media (max-width: 620px) { .watch-expanded-content { flex: none; width: 100%; } }

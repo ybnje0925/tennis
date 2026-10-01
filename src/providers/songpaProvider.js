@@ -54,7 +54,7 @@ export async function openSongpaSession(options = {}) {
 export async function isSongpaLoggedIn(page) {
   await page.goto("https://spc.esongpa.or.kr/", { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS }).catch(() => {});
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  return /로그아웃|마이페이지|대관결제내역|정보수정/.test(body);
+  return /로그아웃/.test(body);
 }
 
 export async function ensureSongpaLoggedIn(page, options = {}) {
@@ -302,7 +302,8 @@ async function checkSongpaVenueMonth(page, venueId, options = {}) {
   }
 
   const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
-  if (/\/bbs\/login\.php/.test(typeof page.url === "function" ? page.url() : "") || (/로그인|아이디|비밀번호/.test(body) && !/로그아웃|마이페이지/.test(body))) {
+  const html = typeof page.content === "function" ? await page.content() : "";
+  if (isSongpaLoginPage({ url: typeof page.url === "function" ? page.url() : "", html, body })) {
     throw diagnosticError({
       type: "LOGIN_OR_PROTECTION_PAGE",
       stage: "AUTH_OR_PROTECTION",
@@ -340,6 +341,16 @@ async function checkSongpaVenueMonth(page, venueId, options = {}) {
     });
   });
   return reservations;
+}
+
+// A navigation login link is present even on valid public calendars.
+export function isSongpaLoginPage({ url = "", html = "", body = "" } = {}) {
+  if (/\/bbs\/login\.php(?:[?#]|$)/i.test(url)) return true;
+  const hasCalendar = /class=["'][^"']*\bcalendar1_table\b/i.test(html);
+  const hasLoginForm = /<input\b[^>]*(?:type=["']password["']|name=["']mb_password["'])/i.test(html)
+    || /<form\b[^>]*(?:id=["']flogin["']|action=["'][^"']*login_check\.php)/i.test(html);
+  if (hasCalendar) return false;
+  return hasLoginForm || /로그인\s*후\s*(?:이용|접근|조회)|로그인이\s*필요|접근이\s*차단|비정상적인\s*접근/.test(body);
 }
 
 export async function parseSongpaReservationDom(page, venueId) {

@@ -606,8 +606,10 @@ function renderWatchCard(watch) {
             </div>
           </summary>
           <div class="watch-expanded">
+            <div class="watch-expanded-content">
             <p>${expired ? "지난 날짜의 알림입니다. 필요하지 않다면 삭제해 주세요." : "알림 조건을 일시정지하거나 다시 켤 수 있어요."}</p>
             ${renderMyeonmokResult(watch)}
+            </div>
             <div class="watch-actions">
               <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}" ${expired ? "disabled" : ""}>
                 ${watch.enabled === false ? "알림 켜기" : "일시정지"}
@@ -622,9 +624,9 @@ function renderWatchCard(watch) {
 function renderMyeonmokResult(watch) {
   if (!watch.venues.includes("myeonmok")) return "";
   const result = watch.publicResult;
-  if (!result) return "<p>아직 조회하지 않았습니다.</p>";
+  if (!result) return '<div class="watch-public-result"><p>아직 조회하지 않았습니다.</p></div>';
   const lines = (result.items || []).map(item => `<p>${item.part}부 ${item.time} · ${escapeHtml(item.status)} ${Number.isFinite(item.availableCount) ? "· 잔여 " + item.availableCount + "팀" : ""}${item.warning ? " · 확인 필요" : ""}</p>`).join("");
-  return `<p>${result.refreshing ? "조회 진행 중 · 이전 성공 결과" : result.stale ? "최신 조회 실패 · 이전 성공 결과" : "공개 현황"} · 마지막 시도 ${formatDateTime(result.lastAttemptAt)} · 마지막 성공 ${formatDateTime(result.lastSuccessAt)}</p>${lines}<p>실제 신청 가능 여부는 공식 사이트에서 확인</p><a href="https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php" target="_blank" rel="noopener noreferrer">공식 예약 페이지</a>`;
+  return `<div class="watch-public-result"><p>${result.refreshing ? "조회 진행 중 · 이전 성공 결과" : result.stale ? "최신 조회 실패 · 이전 성공 결과" : "공개 현황"} · 마지막 시도 ${result.lastAttemptAt ? formatDateTime(result.lastAttemptAt) : "아직 조회하지 않음"} · 마지막 성공 ${result.lastSuccessAt ? formatDateTime(result.lastSuccessAt) : "성공한 조회 없음"}</p>${lines}<p>실제 신청 가능 여부는 공식 사이트에서 확인</p><a href="https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php" target="_blank" rel="noopener noreferrer">공식 예약 페이지</a></div>`;
 }
 
 function formatWatchDate(value) {

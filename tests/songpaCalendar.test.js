@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { parseSongpaCalendarHtml, checkSongpaVenue } from "../src/providers/songpaProvider.js";
+import { parseSongpaCalendarHtml, checkSongpaVenue, isSongpaLoginPage, isSongpaLoggedIn } from "../src/providers/songpaProvider.js";
 import { parseLegacyCalendarHtml } from "../src/legacyHttpParser.js";
 
 const september=readFileSync(new URL("./fixtures/songpa-oryun-public.html",import.meta.url),"utf8");
@@ -57,5 +57,30 @@ describe("actual Songpa responses",()=>{
     const html=fixtures.oryun.replace("예약가능","변경된 상태");
     expect(()=>parseSongpaCalendarHtml(html,"songpa-oryun")).toThrow("회차 상태");
     expect(()=>parseSongpaCalendarHtml("<form id='flogin'>로그인</form>","songpa-oryun")).toThrow("연월");
+  });
+});
+
+describe("Songpa authentication detection", () => {
+  it("does not mistake login navigation or guidance for a login form", async () => {
+    const page = {
+      goto: vi.fn(async () => ({ status: () => 200 })),
+      waitForLoadState: vi.fn(async () => {}),
+      url: () => "https://spc.esongpa.or.kr/page/rent/s04.od.list.php",
+      content: async () => fixtures.oryun,
+      locator: () => ({ innerText: async () => "로그인 아이디 비밀번호 로그인 후 이용 예약현황" })
+    };
+    expect(await checkSongpaVenue(page, "songpa-oryun", { dates: ["2026-10-04"] })).toEqual(parseSongpaCalendarHtml(fixtures.oryun, "songpa-oryun").filter(x => x.date === "2026-10-04"));
+  });
+  it("rejects real login forms, redirects and protection messages", () => {
+    expect(isSongpaLoginPage({ html: '<form id="flogin"><input name="mb_password" type="password"></form>' })).toBe(true);
+    expect(isSongpaLoginPage({ url: "https://spc.esongpa.or.kr/bbs/login.php?url=x", html: fixtures.oryun })).toBe(true);
+    expect(isSongpaLoginPage({ body: "비정상적인 접근입니다" })).toBe(true);
+    expect(isSongpaLoginPage({ body: "로그인 예약현황" })).toBe(false);
+  });
+  it("does not trust member navigation shared with anonymous visitors", async () => {
+    const page = { goto: vi.fn(async () => {}), locator: () => ({ innerText: async () => "로그인 마이페이지 대관결제내역 정보수정" }) };
+    expect(await isSongpaLoggedIn(page)).toBe(false);
+    page.locator = () => ({ innerText: async () => "로그아웃 마이페이지" });
+    expect(await isSongpaLoggedIn(page)).toBe(true);
   });
 });
