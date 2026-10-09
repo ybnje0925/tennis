@@ -100,3 +100,11 @@ describe("provider polling minutes config", () => {
     });
   });
 });
+
+
+describe("Songpa HTTP defaults", () => {
+  it("uses HTTP unless explicitly disabled", async () => {
+    expect((await loadConfigWith({ SONGPA_HTTP_ENABLED: "" })).config.songpaHttpEnabled).toBe(true);
+    expect((await loadConfigWith({ SONGPA_HTTP_ENABLED: "false" })).config.songpaHttpEnabled).toBe(false);
+  });
+});

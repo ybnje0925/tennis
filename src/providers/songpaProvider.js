@@ -40,15 +40,22 @@ export async function openSongpaSession(options = {}) {
       stepLabel: "브라우저 실행"
     }
   );
-  const page = context.pages()[0] || await context.newPage();
-  await context.route("**/*", (route) => {
-    const resourceType = route.request().resourceType();
-    if (["image", "media", "font"].includes(resourceType)) return route.abort();
-    return route.continue();
-  });
-  page.setDefaultTimeout(20_000);
-  page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
-  return { context, page };
+  try {
+    const page = context.pages()[0] || await context.newPage();
+    await context.route("**/*", (route) => {
+      const resourceType = route.request().resourceType();
+      if (["image", "media", "font"].includes(resourceType)) return route.abort();
+      return route.continue();
+    });
+    page.setDefaultTimeout(20_000);
+    page.setDefaultNavigationTimeout?.(NAVIGATION_TIMEOUT_MS);
+    return { context, page };
+  } catch (error) {
+    await context.close().catch((closeError) => console.warn(
+      '송파 브라우저 초기화 실패 후 종료 실패: ' + closeError.message
+    ));
+    throw error;
+  }
 }
 
 export async function isSongpaLoggedIn(page) {
@@ -104,9 +111,14 @@ export async function checkSongpaVenues(venueIds, options = {}) {
 async function checkSongpaVenuesHttp(venueIds, options = {}) {
   const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "songpa");
   if (ids.length === 0) return {};
+  assertSongpaLoginConfig();
   const session = new CookieSession();
-  await session.request(SONGPA_LOGIN_URL);
-  const login = await session.request("https://spc.esongpa.or.kr/bbs/login_check.php", {
+  // Abort the actual HTTP request, including response-body reads, on timeout.
+  const request = (url, init = {}) => session.request(url, {
+    ...init, signal: AbortSignal.timeout(NAVIGATION_TIMEOUT_MS)
+  });
+  await request(SONGPA_LOGIN_URL);
+  const login = await request("https://spc.esongpa.or.kr/bbs/login_check.php", {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
@@ -128,9 +140,9 @@ async function checkSongpaVenuesHttp(venueIds, options = {}) {
     const items = [];
     for (const month of pages) {
       const url = `${VENUES[venueId].url}${month ? `?sch_sym=${encodeURIComponent(month)}` : ""}`;
-      const response = await session.request(url, { headers: { referer: "https://spc.esongpa.or.kr/" } });
+      const response = await request(url, { headers: { referer: "https://spc.esongpa.or.kr/" } });
       const html = await response.text();
-      if (!response.ok || /로그인 후|아이디를 입력|비밀번호를 입력/.test(html) || !/calendar1_table/.test(html)) {
+      if (!response.ok || isSongpaLoginPage({ url, html, body: html }) || !/calendar1_table/.test(html)) {
         throw new Error(`${VENUES[venueId].name} HTTP 인증/달력 응답이 아닙니다 (${response.status})`);
       }
       const parsed = parseLegacyCalendarHtml(html, venueId, "songpa");

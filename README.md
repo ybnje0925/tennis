@@ -65,7 +65,7 @@ Railway에서 Olympic monitoring이 실행 중일 때 동일 계정으로 로컬
 ## 동작 방식
 
 1. 강동은 cookie session을 보존하는 HTTP 요청으로 로그인/예약 HTML을 조회합니다.
-2. 강동 HTTP 조회가 실패하면 `LEGACY_HTTP_FALLBACK=true`일 때 기존 Playwright 경로로 재시도합니다. 송파는 기본적으로 Playwright로 직접 조회하며, HTTP 경로는 `SONGPA_HTTP_ENABLED=true`로 명시적으로 켤 수 있습니다.
+2. 강동 HTTP 조회가 실패하면 `LEGACY_HTTP_FALLBACK=true`일 때 기존 Playwright 경로로 재시도합니다. 송파는 기본적으로 HTTP로 조회하며, 실패 시 `LEGACY_HTTP_FALLBACK=true`이면 Playwright로 재시도합니다. `SONGPA_HTTP_ENABLED=false`로 설정하면 브라우저 경로를 직접 사용합니다.
 3. 올림픽 Provider는 Playwright Chromium persistent context를 사용합니다.
 4. 날짜, 시간대, 예약가능 여부, 가능 코트 수를 표준 데이터로 정규화합니다.
 5. provider별 조회주기에 맞춰 현황을 조회하고 저장된 알림 조건과 비교합니다.
@@ -257,3 +257,5 @@ Railway 서비스 설정에서 Public Networking의 도메인을 생성하면 �
 ## 면목구립테니스장
 
 서울 중랑구 면목구립테니스장은 로그인 없는 HTTP 공개 현황 조회를 공통 5분 주기로 공유합니다. 계절별 회차와 잔여 팀 수를 표시하며 신청 자격은 공식 사이트에서 확인해야 합니다. 구현·설정·검증 기록은 [면목 통합 문서](docs/myeonmok.md)를 참고하세요.
+
+송파·올림픽의 반복 브라우저 시작 실패 수정과 배포 확인 절차는 [브라우저 안정화 기록](docs/browser-start-fix.md)을 참고하세요.

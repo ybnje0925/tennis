@@ -53,6 +53,17 @@ describe("launchPersistentContext", () => {
 
     expect(launchPersistentContextMock).toHaveBeenCalledTimes(2);
   });
+
+  it("passes the timeout to Playwright so it cancels and cleans up failed launches", async () => {
+    const { launchPersistentContext } = await importLauncher();
+    launchPersistentContextMock.mockRejectedValue(new Error("browserType.launchPersistentContext: Timeout 7ms exceeded"));
+    await expect(launchPersistentContext("/tmp/profile", { headless: true, timeout: 0 }, {
+      timeoutMs: 7, retryDelaysMs: []
+    })).rejects.toThrow("Timeout 7ms");
+    expect(launchPersistentContextMock).toHaveBeenCalledWith("/tmp/profile", { headless: true, timeout: 7 });
+    launchPersistentContextMock.mockResolvedValue({ id: "next" });
+    await expect(launchPersistentContext("/tmp/next", {}, { retryDelaysMs: [] })).resolves.toEqual({ id: "next" });
+  });
 });
 
 function waitForTick() {

@@ -1,5 +1,4 @@
 import { chromium } from "playwright";
-import { withTimeout } from "./providerTiming.js";
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000;
 const DEFAULT_RETRY_DELAYS_MS = [1000, 3000];
@@ -46,12 +45,12 @@ async function launchPersistentContextWithRetry(userDataDir, launchOptions, opti
   for (let attempt = 0; attempt < delays.length; attempt += 1) {
     if (delays[attempt] > 0) await wait(delays[attempt]);
     try {
-      return await withTimeout(
-        chromium.launchPersistentContext(userDataDir, launchOptions),
-        options.timeoutMs,
-        options.providerLabel,
-        options.stepLabel
-      );
+      // Playwright's timeout aborts launch and reaps the browser process.
+      // Promise.race only stops waiting and can leave an orphan launch.
+      return await chromium.launchPersistentContext(userDataDir, {
+        ...launchOptions,
+        timeout: options.timeoutMs
+      });
     } catch (error) {
       lastError = error;
       if (!isBrowserLaunchRetryable(error) || attempt === delays.length - 1) throw error;

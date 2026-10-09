@@ -273,12 +273,21 @@ describe("checkAllVenues targeting", () => {
     expect(running).toHaveBeenCalledTimes(1);
   });
 
-  it("releases the provider lock after a provider hard timeout", async () => {
-    await expect(runProviderCheck("gangdong", () => new Promise(() => {}), { timeoutMs: 5 })).rejects.toMatchObject({
+  it.each([false, true])("keeps the lock after timeout until cleanup settles (reject=%s)", async (reject) => {
+    let settle;
+    const pending = new Promise((resolve, rejectPromise) => {
+      settle = () => reject ? rejectPromise(new Error("late failure")) : resolve({ gangil: [] });
+    });
+    await expect(runProviderCheck("gangdong", () => pending, { timeoutMs: 5 })).rejects.toMatchObject({
       code: "PROVIDER_TIMEOUT"
     });
-
-    await expect(runProviderCheck("gangdong", async () => ({ gangil: [] }), { timeoutMs: 100 })).resolves.toEqual({ gangil: [] });
+    const duplicate = vi.fn(async () => ({ gangil: [] }));
+    const skipped = await runProviderCheck("gangdong", duplicate);
+    expect(duplicate).not.toHaveBeenCalled();
+    expect(skipped[Symbol.for("tennis.checkMeta")].errors[0].type).toBe("DUPLICATE_SKIPPED");
+    settle();
+    await pending.catch(() => {});
+    await expect(runProviderCheck("gangdong", async () => ({ gangil: [] }))).resolves.toEqual({ gangil: [] });
   });
 
   it("retries a retryable venue failure once and keeps the successful retry", async () => {

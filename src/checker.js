@@ -466,18 +466,20 @@ export async function runProviderCheck(providerId, fn, options = {}) {
     });
   }
 
-  const running = withTimeout(
-    Promise.resolve().then(fn),
+  // A reporting timeout does not cancel fn or finish browser cleanup.
+  // Keep the profile locked until the underlying work actually settles.
+  const running = Promise.resolve().then(fn);
+  providerLocks.set(providerId, running);
+  const release = () => {
+    if (providerLocks.get(providerId) === running) providerLocks.delete(providerId);
+  };
+  void running.then(release, release);
+  return withTimeout(
+    running,
     options.timeoutMs ?? PROVIDER_HARD_TIMEOUT_MS,
     PROVIDERS[providerId]?.name || providerId,
     "provider 전체 조회"
   );
-  providerLocks.set(providerId, running);
-  try {
-    return await running;
-  } finally {
-    if (providerLocks.get(providerId) === running) providerLocks.delete(providerId);
-  }
 }
 
 async function safeProviderCheck(providerId, fn) {
