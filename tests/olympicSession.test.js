@@ -32,7 +32,7 @@ function createPage(options = {}) {
       isClosed: () => false,
       setDefaultTimeout: vi.fn(),
       goto: vi.fn(async (url) => {
-        currentUrl = url;
+        currentUrl = options.reservationRedirect && url.endsWith("/resrvtn_aplictn.do") ? options.reservationRedirect : url;
       }),
       waitForLoadState: vi.fn(async () => {}),
       waitForFunction: vi.fn(async () => {}),
@@ -46,6 +46,7 @@ function createPage(options = {}) {
           innerText: vi.fn(async () => (bodyTexts.length > 1 ? bodyTexts.shift() : bodyTexts[0])),
           fill,
           click,
+          waitFor: vi.fn(async () => {}),
           filter: () => locator,
           first: () => locator
         };
@@ -166,5 +167,56 @@ describe("Olympic session reuse and login locking", () => {
     expect(info.mock.calls.some(([message]) => message.includes("browser closed"))).toBe(true);
     expect(launchPersistentContext).toHaveBeenCalledWith(expect.stringContaining("olympic-profile"), expect.any(Object));
     info.mockRestore();
+  });
+});
+
+
+describe("Olympic login regression", () => {
+  it("does not trust public member-navigation menus as an authenticated session", async () => {
+    const { isOlympicLoggedIn } = await importProvider();
+    const fake = createPage({ bodyTexts: ["로그인 마이페이지 신청내역 예약신청"] });
+    expect(await isOlympicLoggedIn(fake.page)).toBe(false);
+  });
+  it("uses the actual tennis login form and leaves a verified reservation page open", async () => {
+    const { ensureOlympicLoggedIn, OLYMPIC_LOGIN_SELECTORS } = await importProvider();
+    const fake = createPage({ bodyTexts: ["로그인 마이페이지 신청내역", "로그아웃 마이페이지", "로그아웃 마이페이지"] });
+    expect(await ensureOlympicLoggedIn(fake.page)).toBe(true);
+    expect(fake.page.goto.mock.calls.some(([url]) => url === "https://www.ksponco.or.kr/online/tennis/login.do")).toBe(true);
+    expect(fake.page.locator).toHaveBeenCalledWith(OLYMPIC_LOGIN_SELECTORS.user);
+    expect(fake.page.locator).toHaveBeenCalledWith(OLYMPIC_LOGIN_SELECTORS.password);
+    expect(fake.page.locator).toHaveBeenCalledWith(OLYMPIC_LOGIN_SELECTORS.submit);
+    expect(fake.page.url()).toBe("https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do");
+    expect(fake.page.waitForLoadState.mock.calls.some(([state]) => state === "networkidle")).toBe(false);
+  });
+  it("reports a changed login form instead of generic site slowness", async () => {
+    const { ensureOlympicLoggedIn } = await importProvider();
+    const fake = createPage({ bodyTexts: ["로그인 마이페이지"] });
+    const locator = fake.page.locator.getMockImplementation();
+    fake.page.locator.mockImplementation(selector => {
+      const control = locator(selector);
+      control.waitFor = vi.fn(async () => { throw new Error("Timeout waiting for user_id"); });
+      return control;
+    });
+    await expect(ensureOlympicLoggedIn(fake.page)).rejects.toMatchObject({ type: "LOGIN_FORM_CHANGED", stage: "AUTH_OR_PROTECTION", retryable: false });
+    expect(fake.fill).not.toHaveBeenCalled();
+  });
+  it("does not hide an authentication redirect as a successful session", async () => {
+    const { ensureOlympicLoggedIn } = await importProvider();
+    const fake = createPage({ reservationRedirect: "https://www.ksponco.or.kr/online/tennis/index.do" });
+    await expect(ensureOlympicLoggedIn(fake.page)).rejects.toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE" });
+    expect(fake.fill).not.toHaveBeenCalled();
+  });
+  it("does not submit credentials when checking the session fails to navigate", async () => {
+    const { ensureOlympicLoggedIn } = await importProvider();
+    const fake = createPage();
+    fake.page.goto.mockRejectedValueOnce(new Error("page.goto: network timeout"));
+    await expect(ensureOlympicLoggedIn(fake.page)).rejects.toThrow("network timeout");
+    expect(fake.fill).not.toHaveBeenCalled();
+  });
+  it("rejects an unconfirmed login without claiming calendar access succeeded", async () => {
+    const { ensureOlympicLoggedIn } = await importProvider();
+    const fake = createPage({ bodyTexts: ["로그인 마이페이지 신청내역"] });
+    await expect(ensureOlympicLoggedIn(fake.page)).rejects.toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE" });
+    expect(fake.page.goto.mock.calls.some(([url]) => url.endsWith("/resrvtn_aplictn.do"))).toBe(false);
   });
 });

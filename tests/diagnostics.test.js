@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyError } from "../src/diagnostics.js";
+import { classifyError, diagnosticError } from "../src/diagnostics.js";
 
 describe("classifyError", () => {
   it("classifies Chromium EAGAIN spawn failures as browser launch failures", () => {
@@ -29,4 +29,10 @@ describe("classifyError", () => {
     });
     expect(diagnostic.userMessage).not.toContain("chrome-headless-shell");
   });
+});
+
+
+it("distinguishes login form changes from response delays", () => {
+  expect(classifyError(diagnosticError({ provider: "olympic", type: "LOGIN_FORM_CHANGED", stage: "AUTH_OR_PROTECTION", retryable: false, message: "Login form timeout" })))
+    .toMatchObject({ type: "LOGIN_FORM_CHANGED", userCategory: "로그인 화면 변경", retryable: false });
 });

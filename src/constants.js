@@ -131,6 +131,7 @@ export const VENUES = {
 export const LOGIN_URL = "https://gdgd.igangdong.or.kr/bbs/login.php";
 export const SONGPA_LOGIN_URL = "https://spc.esongpa.or.kr/bbs/login.php";
 export const OLYMPIC_HOME_URL = "https://www.ksponco.or.kr/online/tennis/index.do";
+export const OLYMPIC_LOGIN_URL = "https://www.ksponco.or.kr/online/tennis/login.do";
 export const OLYMPIC_RESERVATION_URL = "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do";
 
 export const PROVIDERS = {

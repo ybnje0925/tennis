@@ -1,14 +1,20 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { config, assertOlympicLoginConfig } from "../config.js";
-import { OLYMPIC_HOME_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
+import { OLYMPIC_HOME_URL, OLYMPIC_LOGIN_URL, OLYMPIC_RESERVATION_URL, PROVIDERS, VENUES } from "../constants.js";
 import { createProviderTimer } from "../providerTiming.js";
 import { launchPersistentContext } from "../playwrightLauncher.js";
+import { diagnosticError } from "../diagnostics.js";
 
 const SESSION_DIR = path.resolve(config.sessionDir, "olympic-profile");
 const CHECK_META = Symbol.for("tennis.checkMeta");
 const NAVIGATION_TIMEOUT_MS = 30_000;
 const BROWSER_LAUNCH_TIMEOUT_MS = 30_000;
+export const OLYMPIC_LOGIN_SELECTORS = {
+  user: "#user_id:visible, input[name='user_id']:visible, #login_id:visible, input[name='login_id']:visible",
+  password: "#user_pwd:visible, input[name='user_pwd']:visible, #login_pwd:visible, input[name='login_pwd']:visible, input[type='password']:visible",
+  submit: "button[onclick*='fn_login1']:visible, form:has(input[name='user_id']) button:has-text('로그인'):visible, form:has(input[name='login_id']) button:has-text('로그인'):visible, .btn_login:visible"
+};
 let olympicSessionPromise = null;
 let olympicSession = null;
 let olympicLoginPromise = null;
@@ -105,10 +111,11 @@ export async function closeOlympicSession() {
 }
 
 export async function isOlympicLoggedIn(page) {
-  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS }).catch(() => {});
-  const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+  const body = await page.locator("body").innerText({ timeout: 5000 });
   if (isOlympicDuplicateSessionText(body)) return false;
-  return /로그아웃|마이페이지|신청내역/.test(body) && !/통합회원\s*ID로그인/.test(body);
+  // My Page and application-history menus also appear for anonymous visitors.
+  return /로그아웃/.test(body) && !/통합회원\s*ID로그인|아이디로\s*로그인/.test(body);
 }
 
 export async function ensureOlympicLoggedIn(page, options = {}) {
@@ -126,24 +133,33 @@ async function ensureOlympicLoggedInOnce(page, options = {}) {
   console.info("[Olympic]");
   console.info("provider lock: acquired");
   if (await maybeStep(timer, "로그인 상태 확인", () => isOlympicLoggedIn(page))) {
-    await openOlympicReservationPage(page, { timer }).catch(() => {});
-    if (!/\/sso\/usr\/login\/view/.test(page.url())) {
-      console.info("session source: existing");
-      console.info("login required: no");
-      console.info("duplicate login detected: no");
-      return true;
-    }
+    await openOlympicReservationPage(page, { timer });
+    console.info("session source: existing");
+    console.info("login required: no");
+    console.info("duplicate login detected: no");
+    return true;
   }
 
   console.info("session source: restored");
   console.info("login required: yes");
   assertOlympicLoginConfig();
   return maybeStep(timer, "로그인", async () => {
-    await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
-
-    await page.locator("#login_id, input[name='login_id']").first().fill(config.olympicUserId, { timeout: 10_000 });
-    await page.locator("#login_pwd, input[name='login_pwd'], input[type='password']").first().fill(config.olympicUserPassword, { timeout: 10_000 });
+    await maybeStep(timer, "로그인페이지 접근", () => page.goto(OLYMPIC_LOGIN_URL, {
+      waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS
+    }));
+    const userInput = page.locator(OLYMPIC_LOGIN_SELECTORS.user).first();
+    const passwordInput = page.locator(OLYMPIC_LOGIN_SELECTORS.password).first();
+    const submit = page.locator(OLYMPIC_LOGIN_SELECTORS.submit).first();
+    await maybeStep(timer, "로그인 입력폼 확인", async () => {
+      try {
+        await Promise.all([userInput, passwordInput, submit].map(control => control.waitFor({ state: "visible", timeout: 10_000 })));
+      } catch (error) {
+        throw diagnosticError({ provider: "olympic", type: "LOGIN_FORM_CHANGED", stage: "AUTH_OR_PROTECTION",
+          retryable: false, message: "올림픽 로그인 입력폼을 찾지 못했습니다. 로그인 경로 또는 화면 구조 확인이 필요합니다.", cause: error });
+      }
+    });
+    await userInput.fill(config.olympicUserId, { timeout: 10_000 });
+    await passwordInput.fill(config.olympicUserPassword, { timeout: 10_000 });
 
     const dialogMessages = [];
     let duplicateSessionDetected = false;
@@ -156,9 +172,8 @@ async function ensureOlympicLoggedInOnce(page, options = {}) {
 
     await Promise.all([
       page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {}),
-      page.locator("button:has-text('로그인'), .btn_login").first().click({ timeout: 10_000 })
+      submit.click({ timeout: 10_000 })
     ]);
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
     const body = await page.locator("body").innerText({ timeout: 5000 }).catch(() => "");
     if (duplicateSessionDetected || isOlympicDuplicateSessionText(body)) {
       console.warn("Olympic duplicate session detected.");
@@ -167,12 +182,13 @@ async function ensureOlympicLoggedInOnce(page, options = {}) {
       throw new OlympicDuplicateSessionError();
     }
 
-    await openOlympicReservationPage(page, { timer }).catch(() => {});
-
-    const loggedIn = await isOlympicLoggedIn(page) && !/\/sso\/usr\/login\/view/.test(page.url());
-    if (!loggedIn && dialogMessages.length > 0) {
-      throw new Error(`Olympic login failed: ${dialogMessages.at(-1)}`);
+    const loggedIn = await maybeStep(timer, "로그인 완료 확인", () => isOlympicLoggedIn(page));
+    if (!loggedIn) {
+      throw diagnosticError({ provider: "olympic", type: "LOGIN_OR_PROTECTION_PAGE", stage: "AUTH_OR_PROTECTION",
+        retryable: false, message: dialogMessages.length ? "Olympic login failed: " + dialogMessages.at(-1) : "올림픽 로그인 완료를 확인하지 못했습니다." });
     }
+    await openOlympicReservationPage(page, { timer });
+
     console.info("session source: new-login");
     console.info("duplicate login detected: no");
     return loggedIn;
@@ -196,10 +212,11 @@ export async function openOlympicReservationPage(page, options = {}) {
   }
 
   await maybeStep(timer, "예약페이지 접근", async () => {
-    await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
-
-    const reservationLink = page.locator("a.btn_app:visible, a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
-    await reservationLink.click({ timeout: 15_000 });
+    await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    if (!isOlympicReservationUrl(page)) {
+      throw diagnosticError({ provider: "olympic", type: "LOGIN_OR_PROTECTION_PAGE", stage: "AUTH_OR_PROTECTION",
+        retryable: false, message: "올림픽 예약페이지가 홈 또는 로그인 화면으로 이동했습니다. 세션 인증 확인이 필요합니다." });
+    }
     await waitForOlympicCalendar(page);
   });
 }

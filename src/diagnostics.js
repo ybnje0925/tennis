@@ -97,6 +97,13 @@ export function userErrorGuide(type, message = "") {
       action: "대부분 일시적인 문제라 다음 조회 때 다시 시도됩니다. 반복되면 서버 재시작이나 메모리/프로세스 사용량 확인이 필요합니다."
     };
   }
+  if (type === "LOGIN_FORM_CHANGED") {
+    return {
+      category: "로그인 화면 변경",
+      summary: "예약 사이트의 로그인 입력폼을 찾지 못했습니다.",
+      action: "로그인 페이지 주소나 입력칸 구성이 바뀌었는지 확인해야 합니다."
+    };
+  }
   if (type === "TIMEOUT") {
     return {
       category: "응답 지연",
