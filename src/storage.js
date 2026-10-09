@@ -1,3 +1,4 @@
+import { disableExpiredWatches } from "./watchExpiry.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -41,8 +42,12 @@ const initialState = {
 };
 
 export async function loadState() {
-  await stateQueue.catch(() => {});
-  return readStateFile();
+  // Persist automatic expiry in the same queue as writes to avoid lost updates.
+  return serializeStateWrite(async () => {
+    const state = await readStateFile();
+    if (disableExpiredWatches(state)) await writeStateFile(state);
+    return state;
+  });
 }
 
 async function readStateFile() {
@@ -70,6 +75,8 @@ export async function updateState(mutator) {
 }
 
 async function writeStateFile(state) {
+  // Also prevent a stale condition from being re-enabled through the API.
+  disableExpiredWatches(state);
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(STATE_TMP_FILE, JSON.stringify(state, null, 2), "utf8");
   await rename(STATE_TMP_FILE, STATE_FILE);

@@ -40,13 +40,16 @@ function availabilityValue(value) {
   return Boolean(value?.available);
 }
 
-export function getActiveWatches(state) {
+export function getActiveWatches(state, now = null) {
   const enabledUsers = new Set(
     (state.users || [])
       .filter((user) => user.enabled !== false && user.telegramConnected && user.telegramChatId)
       .map((user) => user.id)
   );
-  return state.watches.filter((watch) => watch.enabled === true && watch.userId && enabledUsers.has(watch.userId));
+  const parts = now ? kstParts(now) : null;
+  const today = parts ? [parts.year, String(parts.month).padStart(2, "0"), String(parts.day).padStart(2, "0")].join("-") : null;
+  return state.watches.filter((watch) => watch.enabled === true && watch.userId && enabledUsers.has(watch.userId)
+    && (!today || (normalizeDate(watch.date) || "") >= today));
 }
 
 export function groupActiveWatchesByVenue(watches) {
@@ -391,8 +394,8 @@ function createStateUpdater(stateLoader, stateSaver, stateUpdater) {
   };
 }
 
-function activeContextFor(state) {
-  const activeWatches = getActiveWatches(state);
+function activeContextFor(state, now) {
+  const activeWatches = getActiveWatches(state, now);
   const grouped = groupActiveWatchesByVenue(activeWatches);
   const venueDates = buildVenueDateTargets(grouped);
   const activeVenueIds = Object.keys(venueDates).filter((venueId) => (
@@ -527,7 +530,7 @@ export async function runCheckCycle({
   const state = await stateLoader();
   const runStartedAt = now.toISOString();
   state.system.providers ||= {};
-  const { activeWatches, activeVenueIds, activeProviders } = activeContextFor(state);
+  const { activeWatches, activeVenueIds, activeProviders } = activeContextFor(state, now);
   const activeProviderIds = Array.from(activeProviders.keys());
   const runIntervalMinutes = schedulerIntervalMinutes(activeProviders.keys());
   syncProviderSchedule(state, activeProviderIds, now);
@@ -535,7 +538,7 @@ export async function runCheckCycle({
   if (activeWatches.length === 0 || activeVenueIds.length === 0) {
     const checkedAt = new Date().toISOString();
     await mutateState((latest) => {
-      const latestContext = activeContextFor(latest);
+      const latestContext = activeContextFor(latest, now);
       syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
       latest.system.lastRun = {
         runStartedAt,
@@ -586,7 +589,7 @@ export async function runCheckCycle({
     selectedProviderIds = Array.from(dueProviderIds);
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
       await mutateState((latest) => {
-        const latestContext = activeContextFor(latest);
+        const latestContext = activeContextFor(latest, now);
         syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
         for (const providerId of blockedProviderIds) {
           if (inFlightProviders.has(providerId)) {
@@ -617,7 +620,7 @@ export async function runCheckCycle({
     }
     try {
       await mutateState((latest) => {
-        const latestContext = activeContextFor(latest);
+        const latestContext = activeContextFor(latest, now);
         mergeProviderStart(latest, selectedProviderIds, {
           now,
           source,
@@ -641,7 +644,7 @@ export async function runCheckCycle({
     selectedProviderIds = selectedProviderIds.filter((providerId) => !skippedProviderIds.has(providerId));
     if (targetVenueIds.length === 0 || targetWatches.length === 0) {
       await mutateState((latest) => {
-        const latestContext = activeContextFor(latest);
+        const latestContext = activeContextFor(latest, now);
         syncProviderSchedule(latest, Array.from(latestContext.activeProviders.keys()), now);
         const newlySkippedProviders = addSkipLogs(latest, skippedProviders, now);
         if (newlySkippedProviders.length === 0) return;
@@ -680,7 +683,7 @@ export async function runCheckCycle({
     const pendingProviderIds = selectedProviderIds.filter((providerId) => providerRuntime(providerId).pending);
     try {
       await mutateState((latest) => {
-        const latestContext = activeContextFor(latest);
+        const latestContext = activeContextFor(latest, now);
         mergeProviderFailure(latest, {
           providerIds: selectedProviderIds,
           targetVenueIds,
@@ -778,7 +781,7 @@ export async function runCheckCycle({
 
   try {
     await mutateState((latest) => {
-      const latestContext = activeContextFor(latest);
+      const latestContext = activeContextFor(latest, now);
       mergeProviderSuccess(latest, {
         providerIds: selectedProviderIds,
         checked,
@@ -1208,7 +1211,7 @@ export function startScheduler() {
   const expression = "* * * * *";
   loadState()
     .then((state) => {
-      const activeWatches = getActiveWatches(state);
+      const activeWatches = getActiveWatches(state, new Date());
       const grouped = groupActiveWatchesByVenue(activeWatches);
       const activeVenueIds = Object.keys(buildVenueDateTargets(grouped)).filter((venueId) => (
         VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider

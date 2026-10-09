@@ -43,16 +43,30 @@ describe("Songpa HTTP monitoring", () => {
   });
   it("does not treat an expired login as an empty successful calendar", async () => {
     fetchMock.mockResolvedValueOnce(new Response('<form id="flogin"><input type="password"></form>'));
-    await expect(checkSongpaVenues(["songpa-oryun"])).rejects.toThrow("HTTP 인증/달력");
+    const result = await checkSongpaVenues(["songpa-oryun"]);
+    expect(result["songpa-oryun"]).toBeUndefined();
+    expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE" });
     expect(launchPersistentContext).not.toHaveBeenCalled();
   });
   it("rejects a calendar for the wrong month", async () => {
     fetchMock.mockResolvedValueOnce(new Response(html.oryun));
-    await expect(checkSongpaVenues(["songpa-oryun"], { venueDates: { "songpa-oryun": ["2026-11-04"] } }))
-      .rejects.toMatchObject({ type: "CALENDAR_DATE_NOT_FOUND" });
+    const result = await checkSongpaVenues(["songpa-oryun"], { venueDates: { "songpa-oryun": ["2026-11-04"] } });
+    expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({ type: "CALENDAR_DATE_NOT_FOUND" });
   });
   it("does not authenticate when no Songpa venues are requested", async () => {
     expect(await checkSongpaVenues([])).toEqual({});
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+
+
+it("keeps another venue successful when one calendar is malformed", async () => {
+  fetchMock.mockResolvedValueOnce(new Response("<div>unexpected calendar</div>"))
+    .mockResolvedValueOnce(new Response(html.ogeum));
+  const result = await checkSongpaVenues(["songpa-oryun", "songpa-ogeum"]);
+  expect(result["songpa-oryun"]).toBeUndefined();
+  expect(result["songpa-ogeum"].length).toBeGreaterThan(0);
+  expect(result[Symbol.for("tennis.checkMeta")].errors).toHaveLength(1);
+  expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({ venueId: "songpa-oryun", type: "PARSE_FAILED" });
+  expect(launchPersistentContext).not.toHaveBeenCalled();
 });

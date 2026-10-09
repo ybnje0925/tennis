@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import {
   addLog,
@@ -6,6 +6,7 @@ import {
   buildVenueDateTargets,
   findNotifications,
   groupActiveWatchesByVenue,
+  getActiveWatches,
   isProviderDue,
   isProviderWithinMonitoringHours,
   isWithinSchedulerQuietHours,
@@ -21,8 +22,11 @@ import { CHECK_META } from "../src/checker.js";
 import { PROVIDERS } from "../src/constants.js";
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-08-24T10:00:00Z"));
   resetSchedulerRuntimeForTests();
 });
+afterEach(() => vi.useRealTimers());
 
 function state(overrides = {}) {
   return {
@@ -1382,5 +1386,23 @@ describe("buildCycleSummary", () => {
     expect(summary).not.toContain("빈자리 0건");
     expect(summary).toContain("↳ 강일테니스장: 날짜 선택 문제 / 2026-09-05");
     expect(summary).toContain("↳ 명일테니스장: 로그인/접근 보호 문제 / 2026-09-05");
+  });
+});
+
+
+describe("expired monitoring dates", () => {
+  it("excludes past watches at KST midnight without deleting saved conditions", () => {
+    const current = state();
+    current.watches = ["2026-10-08", "2026-10-09", "2026-10-14"].map((date, i) => ({ ...current.watches[0], id: "dated-" + i, date }));
+    expect(getActiveWatches(current, new Date("2026-10-08T15:00:00Z")).map(w => w.date)).toEqual(["2026-10-09", "2026-10-14"]);
+    expect(current.watches).toHaveLength(3);
+  });
+  it("sends only current and future conditions to the provider", async () => {
+    const current = state();
+    current.watches = ["2026-09-23", "2026-09-25", "2026-10-14"].map((date, i) => ({ ...current.watches[0], id: "dated-" + i, venues: ["songpa-oryun"], date }));
+    const checker = vi.fn(async () => ({}));
+    await runCheckCycle({ checker, notifier: vi.fn(), stateLoader: async () => current, stateSaver: async () => {}, source: "manual", now: new Date("2026-10-09T04:50:00Z") });
+    expect(checker).toHaveBeenCalledTimes(1);
+    expect(checker.mock.calls[0][0].watches.map(w => w.date)).toEqual(["2026-10-14"]);
   });
 });

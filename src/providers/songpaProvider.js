@@ -133,33 +133,47 @@ async function checkSongpaVenuesHttp(venueIds, options = {}) {
   });
   if (![301, 302, 303, 307, 308].includes(login.status)) throw new Error(`송파 로그인 HTTP ${login.status}`);
   const result = {};
+  const errors = [];
   for (const venueId of ids) {
-    const dates = options.venueDates?.[venueId] || [];
-    const months = Array.from(new Set(dates.map((date) => String(date).slice(0, 7))));
-    const pages = months.length > 0 ? months : [null];
-    const items = [];
-    for (const month of pages) {
-      const url = `${VENUES[venueId].url}${month ? `?sch_sym=${encodeURIComponent(month)}` : ""}`;
-      const response = await request(url, { headers: { referer: "https://spc.esongpa.or.kr/" } });
-      const html = await response.text();
-      if (!response.ok || isSongpaLoginPage({ url, html, body: html }) || !/calendar1_table/.test(html)) {
-        throw new Error(`${VENUES[venueId].name} HTTP 인증/달력 응답이 아닙니다 (${response.status})`);
+    try {
+      const dates = options.venueDates?.[venueId] || [];
+      const months = Array.from(new Set(dates.map((date) => String(date).slice(0, 7))));
+      const pages = months.length > 0 ? months : [null];
+      const items = [];
+      for (const month of pages) {
+        const url = `${VENUES[venueId].url}${month ? `?sch_sym=${encodeURIComponent(month)}` : ""}`;
+        const response = await request(url, { headers: { referer: "https://spc.esongpa.or.kr/" } });
+        const html = await response.text();
+        if (!response.ok || isSongpaLoginPage({ url, html, body: html }) || !/calendar1_table/.test(html)) {
+          const auth = isSongpaLoginPage({ url, html, body: html }) || /자동로그아웃|로그인.*필요|로그인 후/.test(html);
+          throw diagnosticError({ provider: "songpa", venueId,
+            type: !response.ok ? "HTTP_ERROR" : auth ? "LOGIN_OR_PROTECTION_PAGE" : "PARSE_FAILED",
+            stage: !response.ok ? "HTTP" : auth ? "AUTH_OR_PROTECTION" : "PARSE",
+            retryable: response.status >= 500,
+            message: VENUES[venueId].name + " HTTP 인증/달력 응답이 아닙니다 (" + response.status + ")"
+          });
+        }
+        const parsed = parseLegacyCalendarHtml(html, venueId, "songpa");
+        if (month && parsed.calendarMonth !== month) throw diagnosticError({
+          type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+          targetDate: dates.filter(date => date.startsWith(month)).join(", "), retryable: false,
+          message: "송파 HTTP 요청한 달이 표시되지 않았습니다: " + month
+        });
+        const missing = dates.filter(date => (!month || date.startsWith(month)) && !parsed.calendarDates.includes(date));
+        if (missing.length) throw diagnosticError({
+          type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
+          targetDate: missing.join(", "), retryable: false, message: "송파 HTTP 날짜 셀을 찾지 못했습니다."
+        });
+        items.push(...parsed);
       }
-      const parsed = parseLegacyCalendarHtml(html, venueId, "songpa");
-      if (month && parsed.calendarMonth !== month) throw diagnosticError({
-        type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
-        targetDate: dates.filter(date => date.startsWith(month)).join(", "), retryable: false,
-        message: "송파 HTTP 요청한 달이 표시되지 않았습니다: " + month
-      });
-      const missing = dates.filter(date => (!month || date.startsWith(month)) && !parsed.calendarDates.includes(date));
-      if (missing.length) throw diagnosticError({
-        type: "CALENDAR_DATE_NOT_FOUND", stage: "CALENDAR", provider: "songpa", venueId,
-        targetDate: missing.join(", "), retryable: false, message: "송파 HTTP 날짜 셀을 찾지 못했습니다."
-      });
-      items.push(...parsed);
+      result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
+    } catch (error) {
+      // A failed calendar must not discard other venues or launch a whole-provider fallback.
+      errors.push(classifyError(error, { provider: "songpa", venueId,
+        targetDate: options.venueDates?.[venueId]?.join(", ") || null }));
     }
-    result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
   }
+  Object.defineProperty(result, CHECK_META, { value: { errors }, enumerable: false });
   return result;
 }
 
