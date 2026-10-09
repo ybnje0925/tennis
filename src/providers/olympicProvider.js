@@ -68,11 +68,8 @@ async function createOlympicSession(options = {}) {
         stepLabel: "브라우저 실행"
       }
     );
-    await context.route("**/*", (route) => {
-      const resourceType = route.request().resourceType();
-      if (["image", "media", "font"].includes(resourceType)) return route.abort();
-      return route.continue();
-    });
+    // WebGate may require image/font resources while its normal checks run.
+    // Keep a normal browser resource pipeline for the authenticated site.
     console.info(`[Olympic] browser started | profile=${SESSION_DIR}`);
 
     const page = context.pages()[0] || await context.newPage();
@@ -212,7 +209,14 @@ export async function openOlympicReservationPage(page, options = {}) {
   }
 
   await maybeStep(timer, "예약페이지 접근", async () => {
-    await page.goto(OLYMPIC_RESERVATION_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    // The site redirects direct reservation navigation back to home.
+    // Follow its own link so browser navigation retains the official entry path.
+    await page.goto(OLYMPIC_HOME_URL, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
+    const reservationLink = page.locator("a[href*='resrvtn_aplictn.do']:visible").filter({ hasText: /예약신청|일일입장 예약신청/ }).first();
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS }),
+      reservationLink.click({ timeout: 15_000 })
+    ]);
     if (!isOlympicReservationUrl(page)) {
       throw diagnosticError({ provider: "olympic", type: "LOGIN_OR_PROTECTION_PAGE", stage: "AUTH_OR_PROTECTION",
         retryable: false, message: "올림픽 예약페이지가 홈 또는 로그인 화면으로 이동했습니다. 세션 인증 확인이 필요합니다." });
@@ -351,7 +355,7 @@ export async function parseOlympicDateStatuses(page, fallbackYear = new Date().g
 }
 
 export async function readOlympicCalendar(page, fallbackYear = new Date().getFullYear()) {
-  await waitForOlympicCalendar(page).catch(() => {});
+  await waitForOlympicCalendar(page);
   const raw = await page.evaluate(() => {
     const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
     const hasCalendarStatus = (text) => ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
@@ -378,12 +382,29 @@ export async function readOlympicCalendar(page, fallbackYear = new Date().getFul
   };
 }
 
+export function isOlympicProtectionPage({ html = "", body = "" } = {}) {
+  const hasCalendar = ["가능", "진행", "마감"].every(label => new RegExp(label + "\\s*(?:[-–—:]\\s*)?\\d+\\s*건").test(body));
+  if (hasCalendar) return false;
+  return /WG_StartWebGate|webgate\.js|WebGate/i.test(html)
+    || /비정상적인\s*접근|접근이?\s*차단|자동\s*접속.*차단/.test(body);
+}
+
 export async function waitForOlympicCalendar(page) {
-  await page.waitForFunction(() => {
-    const text = document.body.innerText || "";
-    const hasCalendarStatus = ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
-    return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCalendarStatus;
-  }, null, { timeout: 15_000 });
+  try {
+    await page.waitForFunction(() => {
+      const text = document.body.innerText || "";
+      const hasCalendarStatus = ["가능", "진행", "마감"].every((label) => new RegExp(label + "\\s*(?:[-–—:]\\s*)?\\d+\\s*건").test(text));
+      return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCalendarStatus;
+    }, null, { timeout: 30_000 });
+  } catch (error) {
+    const html = await page.content().catch(() => "");
+    const body = await page.locator("body").innerText({ timeout: 3000 }).catch(() => "");
+    if (isOlympicProtectionPage({ html, body })) {
+      throw diagnosticError({ provider: "olympic", type: "LOGIN_OR_PROTECTION_PAGE", stage: "AUTH_OR_PROTECTION", retryable: false,
+        message: "올림픽 예약페이지가 WebGate 접근 보호 화면에 머물러 달력을 확인하지 못했습니다.", cause: error });
+    }
+    throw error;
+  }
 }
 
 export async function parseOlympicTimeSlots(page, date, courtType) {

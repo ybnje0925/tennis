@@ -21,7 +21,7 @@ function createPage(options = {}) {
         dismiss
       });
     }
-    currentUrl = options.afterClickUrl || "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do";
+    currentUrl = options.reservationRedirect || options.afterClickUrl || "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do";
   });
 
   return {
@@ -219,4 +219,22 @@ describe("Olympic login regression", () => {
     await expect(ensureOlympicLoggedIn(fake.page)).rejects.toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE" });
     expect(fake.page.goto.mock.calls.some(([url]) => url.endsWith("/resrvtn_aplictn.do"))).toBe(false);
   });
+});
+
+
+it("identifies a WebGate challenge instead of reporting a generic slow calendar", async () => {
+  const { waitForOlympicCalendar, readOlympicCalendar } = await importProvider();
+  const page = {
+    waitForFunction: vi.fn(async () => { throw new Error("page.waitForFunction: Timeout 30000ms exceeded"); }),
+    content: async () => '<script src="https://cdn2.devy.kr/2120/js/webgate.js"></script>',
+    locator: () => ({ innerText: async () => "" }),
+    evaluate: vi.fn()
+  };
+  await expect(waitForOlympicCalendar(page)).rejects.toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE", stage: "AUTH_OR_PROTECTION" });
+  await expect(readOlympicCalendar(page)).rejects.toMatchObject({ type: "LOGIN_OR_PROTECTION_PAGE" });
+  expect(page.evaluate).not.toHaveBeenCalled();
+});
+it("does not mistake a loaded calendar's shared security script for a blocked page", async () => {
+  const { isOlympicProtectionPage } = await importProvider();
+  expect(isOlympicProtectionPage({ html: '<script src="webgate.js"></script>', body: "10 가능 3건 진행 0건 마감 9건" })).toBe(false);
 });
