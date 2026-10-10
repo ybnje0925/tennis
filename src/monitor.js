@@ -940,9 +940,22 @@ function addSkipLogs(state, skippedProviders, now) {
   return newlySkippedProviders;
 }
 
-function cycleLogDetails({ checked, watches = [], activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {
+export function cycleLogDetails({ checked, watches = [], activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {
   const errors = (checked?.[CHECK_META]?.errors || []).map(safeDiagnostic);
   return {
+    userResults: [...new Set(watches.map(w => w.userId))].flatMap(userId => {
+      const own = watches.filter(w => w.userId === userId);
+      return [...new Set(own.flatMap(w => w.venues || []))].map(venueId => {
+        const scoped = own.filter(w => w.venues.includes(venueId)).map(w => ({ ...w, venues: [venueId] }));
+        const failed = errors.some(e => (e.venueId ? e.venueId === venueId : e.provider === VENUES[venueId]?.provider)
+          && (!e.targetDate || scoped.some(w => e.targetDate.includes(w.date))));
+        const completed = Object.hasOwn(checked, venueId) || Object.hasOwn(checked, VENUES[venueId]?.provider);
+        const availableCount = failed || !completed ? null : countMatchingAvailableItems({
+          watches: scoped, users: [{id:userId,enabled:true,telegramConnected:true,telegramChatId:"count-only"}]
+        }, Object.values(checked).flat());
+        return { userId, venueId, availableCount };
+      });
+    }),
     watchTargets: watches.map(w => ({ watchId: w.id, userId: w.userId, venueIds: w.venues, date: w.date })),
     kind: errors.length > 0 ? "provider-error" : "provider-check",
     checkedAt,

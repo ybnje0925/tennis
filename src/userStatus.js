@@ -1,3 +1,4 @@
+import { facilityResultText } from "../public/availabilitySummary.js";
 import { VENUES, PROVIDERS } from "./constants.js";
 
 // Never forward shared free-text summaries: they may contain other users' dates
@@ -15,7 +16,16 @@ export function userSystemStatus(state, userId) {
     const ownTargets = detail.watchTargets?.filter(t => t.userId === userId && watches.some(w => w.id === t.watchId));
     if (detail.watchTargets?.length && !ownTargets.length) continue;
     const checkedVenues = ownTargets?.length ? new Set(ownTargets.flatMap(t => t.venueIds || [])) : venues;
-    const facilities = (detail.facilities || []).filter(f => checkedVenues.has(f.venueId));
+    const facilities = (detail.facilities || []).filter(f => checkedVenues.has(f.venueId)).map(f => {
+      const result = detail.userResults?.find(r => r.userId === userId && r.venueId === f.venueId);
+      const failed = (detail.errors || []).some(e => relevant(e) && (e.venueId ? e.venueId === f.venueId : e.provider === f.provider));
+      // Legacy row counts cannot prove that date lookup completed or establish
+      // how many rows were available and matched this user.
+      const availableCount = failed ? null : result?.availableCount ?? null;
+      const status = failed ? "failed" : f.status;
+      const scoped = { ...f, status, availableCount };
+      return { ...scoped, resultMessage: facilityResultText(scoped) };
+    });
     const errors = (detail.errors || []).filter(relevant);
     const notificationErrors = (detail.notificationErrors || []).filter(e => e.userId === userId);
     const skippedProviders = (detail.skippedProviders || []).filter(p => providers.has(p.provider));
@@ -26,7 +36,12 @@ export function userSystemStatus(state, userId) {
     const time = (state.system.logs?.[index] || "").match(/^\[\d{2}:\d{2}\]/)?.[0] || "";
     const labels = [...new Set([...facilities.map(f => f.provider), ...errors.map(e => e.provider), ...skippedProviders.map(p => p.provider)])]
       .map(id => PROVIDERS[id]?.name || id).filter(Boolean).join(" · ");
-    const line = time + " " + (errors.length ? "조회실패" : "조회") + " | " + labels + (notificationErrors.length ? " · 내 알림 발송 실패" : "");
+    const complete = facilities.length > 0 && facilities.every(f => f.status === "checked" && Number.isInteger(f.availableCount));
+    const vacancyCount = complete ? facilities.reduce((n,f) => n + f.availableCount, 0) : null;
+    const outcome = errors.length || facilities.some(f => f.status === "failed") ? "조회 실패 · 빈자리 확인 불가"
+      : complete ? vacancyCount > 0 ? "조회 완료 · 빈자리 " + vacancyCount + "건 발견" : "조회 완료 · 빈자리 없음"
+      : "조회 상태 · 빈자리 확인 불가";
+    const line = time + " " + outcome + " | " + labels + (notificationErrors.length ? " · 내 알림 발송 실패" : "");
     logs.push(line); logIds.push(detail.logId || String(index));
     logDetails.push({ logId: logIds.at(-1), line, kind: errors.length ? "provider-error" : "provider-check", checkedAt: detail.checkedAt, facilities, errors, skippedProviders, notificationErrors });
   }

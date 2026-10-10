@@ -1,3 +1,4 @@
+import { facilityResultText } from "./availabilitySummary.js";
 import { formatKoreanDateWithWeekday, isDateBeforeKstToday } from "./dateFormat.js";
 import { myeonmokSlots, myeonmokSlotLabel } from "./myeonmokSlots.js";
 import { sortWatchesByReservationTime } from "./watchSorting.js";
@@ -417,10 +418,10 @@ function renderErrorDetails(errors) {
 function renderFacilityDetails(facilities) {
   const section = document.createElement("section");
   section.className = "log-detail-block";
-  section.append(logDetailTitle("시설별 처리 상태"));
+  section.append(logDetailTitle("내 알림 조건의 조회 결과"));
   facilities.forEach((facility) => {
     const row = document.createElement("p");
-    row.textContent = `${facility.venueName || facility.venueId}: ${facilityStatusLabel(facility.status)} · 결과 ${facility.count ?? 0}건`;
+    row.textContent = `${facility.venueName || facility.venueId}: ${facility.resultMessage || facilityResultText(facility)}`;
     section.append(row);
   });
   return section;

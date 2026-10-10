@@ -238,3 +238,16 @@ it("does not mistake a loaded calendar's shared security script for a blocked pa
   const { isOlympicProtectionPage } = await importProvider();
   expect(isOlympicProtectionPage({ html: '<script src="webgate.js"></script>', body: "10 가능 3건 진행 0건 마감 9건" })).toBe(false);
 });
+
+it("preserves a missing calendar date as unknown instead of a successful empty availability", async () => {
+  const {checkOlympicByWatches}=await importProvider();
+  const fake=createPage();
+  fake.page.evaluate=vi.fn(async()=>({pageText:"2026.10.10 ~ 2026.10.16",rawCells:[]}));
+  fake.page.waitForTimeout=vi.fn(async()=>{});
+  const close=vi.fn(async()=>{});
+  launchPersistentContext.mockResolvedValueOnce({pages:()=>[fake.page],close});
+  const result=await checkOlympicByWatches([{id:"mine",userId:"mine",provider:"olympic",venue:"olympic",venues:["olympic"],date:"2026-10-11",times:["07:00~08:00"],enabled:true}]);
+  expect(result).toHaveLength(0);
+  expect(result[Symbol.for("tennis.checkMeta")].errors[0]).toMatchObject({provider:"olympic",venueId:"olympic",targetDate:"2026-10-11",type:"CALENDAR_DATE_NOT_FOUND"});
+  expect(close).toHaveBeenCalled();
+});

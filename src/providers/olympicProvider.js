@@ -628,6 +628,7 @@ export async function checkOlympicByWatches(watches) {
 
     const allSlots = [];
     const failedDateLookups = new Set();
+    const lookupErrors = [];
     for (const group of groups.values()) {
       if (failedDateLookups.has(group.date)) continue;
       try {
@@ -636,12 +637,17 @@ export async function checkOlympicByWatches(watches) {
       } catch (error) {
         if (!(error instanceof OlympicDateLookupError)) throw error;
         failedDateLookups.add(group.date);
+        lookupErrors.push(diagnosticError({provider:"olympic",venueId:"olympic",targetDate:group.date,
+          type:"CALENDAR_DATE_NOT_FOUND",stage:"CALENDAR",retryable:true,
+          message:"올림픽 예약 달력에서 대상 날짜를 확인하지 못했습니다. 빈자리 유무를 확인할 수 없습니다.",cause:error}));
         console.warn("[Olympic]");
         console.warn(`${group.date} date lookup failed`);
         console.warn("next retry: next scheduled check");
       }
     }
-    return uniqueOlympicSlots(allSlots);
+    const result = uniqueOlympicSlots(allSlots);
+    Object.defineProperty(result, CHECK_META, {value:{errors:lookupErrors},enumerable:false,configurable:true});
+    return result;
   } catch (error) {
     errorForTimer = error;
     if (error instanceof OlympicDuplicateSessionError) {
