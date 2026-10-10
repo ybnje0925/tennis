@@ -434,13 +434,17 @@ export async function checkAllVenues(options = {}) {
   const venueDates = buildVenueDateTargets(watches);
   const meta = { errors: [] };
   const olympicWatches = watches.filter(isOlympicWatch);
+  const requestedProviders = new Set([...watchedVenueIds].map(id => VENUES[id]?.provider));
+  const checkRequested = (provider, fn) => requestedProviders.has(provider)
+    ? safeProviderCheck(provider, fn)
+    : Promise.resolve({});
   const providerChecks = [
-    safeProviderCheck("jungnang", () => checkMyeonmokVenues(watches.length ? Array.from(watchedVenueIds) : [], { venueDates })),
-    safeProviderCheck("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
-    safeProviderCheck("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
-    safeProviderCheck("hanam", () => checkHanamVenues(hanamVenueIdsFromWatches(watches), { venueDates, watches })),
+    checkRequested("jungnang", () => checkMyeonmokVenues(watches.length ? Array.from(watchedVenueIds) : [], { venueDates })),
+    checkRequested("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
+    checkRequested("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
+    checkRequested("hanam", () => checkHanamVenues(hanamVenueIdsFromWatches(watches), { venueDates, watches })),
     olympicWatches.length > 0 && config.enableOlympicProvider
-      ? safeProviderCheck("olympic", () => checkOlympicByWatches(olympicWatches))
+      ? checkRequested("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])
   ];
   const [jungnang, gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);

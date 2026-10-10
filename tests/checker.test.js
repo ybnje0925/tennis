@@ -484,3 +484,15 @@ describe("Gangdong calendar month navigation", () => {
     });
   });
 });
+
+it("does not inherit duplicate errors from an unrequested provider running concurrently", async () => {
+  let release;
+  const other = runProviderCheck("hanam", () => new Promise(resolve => { release = () => resolve({}); }));
+  openGangdongSession.mockResolvedValueOnce({ context: { close: vi.fn() }, page: makeCalendarPage() });
+  try {
+    const result = await checkAllVenues({ watches: [{id:"mine",userId:"mine",venues:["gangil"],date:"2026-08-29",times:["18:00~20:00"],enabled:true}] });
+    expect(result[Symbol.for("tennis.checkMeta")].errors).toEqual([]);
+    expect(checkHanamVenues).not.toHaveBeenCalled();
+    expect(result.gangil).toBeDefined();
+  } finally { release(); await other; }
+});

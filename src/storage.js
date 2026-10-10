@@ -433,7 +433,9 @@ function normalizeState(raw) {
         : !detail?.logId && detail?.line === line
           ? { ...detail, logId: id }
           : null;
-      return { id, line, detail: isCompatibleLogDetail(line, matched) ? matched : null };
+      // Matching persistent IDs are authoritative. Legacy text checks must not
+      // erase a valid record because of an unrelated provider diagnostic.
+      return { id, line, detail: detail?.logId === id || isCompatibleLogDetail(line, matched) ? matched : null };
     })
     .filter(({ line }) => !/조회 SKIP - 이전 조회 진행 중/.test(line))
     .slice(-30);

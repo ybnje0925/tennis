@@ -84,3 +84,21 @@ it("blocks existing sessions, pending links and watches; reactivation keeps aler
   expect((await call("/api/watches",headers(a.token))).status).toBe(200);
   expect((await storage.loadState()).watches.filter(w=>w.userId===a.user.id).every(w=>w.enabled===false)).toBe(true);
 });
+
+it("keeps a real Olympic success log through persistence even with an unrelated duplicate diagnostic",async()=>{
+  const watch=(await storage.loadState()).watches.find(w=>w.userId===b.user.id&&w.venues.includes("olympic"));
+  await storage.updateState(state=>{
+    monitor.addLog(state,"조회완료 | 올림픽 1/1 성공",new Date(),{
+      watchTargets:[{watchId:watch.id,userId:b.user.id,venueIds:["olympic"],date:watch.date}],
+      facilities:[{venueId:"olympic",provider:"olympic",status:"checked",count:0}],
+      errors:[{provider:"songpa",type:"DUPLICATE_SKIPPED",message:"UNRELATED-DUPLICATE"}]
+    });
+  });
+  // Read twice: normalization used to permanently discard this record.
+  await storage.loadState();
+  const status=await (await call("/api/status",headers(b.token))).json();
+  expect(status.logDetails.at(-1).facilities).toEqual([{venueId:"olympic",provider:"olympic",status:"checked",count:0}]);
+  expect(status.logDetails.at(-1).errors).toEqual([]);
+  expect(status.logs.at(-1)).toContain("올림픽");
+  expect(JSON.stringify(status)).not.toContain("UNRELATED-DUPLICATE");
+});
