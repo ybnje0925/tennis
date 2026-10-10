@@ -16,7 +16,11 @@ async function load() {
     const body = await response.json();
     if (version !== requestVersion) return;
     if (!response.ok) { if(response.status===403) lock(); throw Error(body.error || '통계를 불러오지 못했습니다.'); }
-    data=body; $('login').hidden=true; $('dashboard').hidden=false; $('message').textContent='';
+    const invitesResponse = await fetch('/api/admin/invites', {headers:{'x-admin-token':token},cache:'no-store'});
+    const invites = await invitesResponse.json();
+    if (version !== requestVersion) return;
+    if (!invitesResponse.ok) throw Error(invites.error || '초대코드 조회 실패');
+    data=body; data.invites=invites; $('login').hidden=true; $('dashboard').hidden=false; $('message').textContent='';
     $('token').value=''; $('detail').hidden=true; render();
   } catch(error) { if(version === requestVersion || !token) $('message').textContent=error.message; }
   finally { if(version === requestVersion) $('refresh').disabled=false; }
@@ -46,6 +50,7 @@ function render(){
   $('cards').innerHTML=[['전체 사용자',s.users,'현재 가입자'],['활성 알림',s.activeWatches,'현재 · 지난 날짜 제외'],['방문 횟수',s.visits,`선택 기간 · 페이지 조회 ${s.pageViews}`],['텔레그램 발송',s.sent,`선택 기간 · 실패 ${s.failed}`]].map(([title,value,note])=>`<div class="card"><span>${title}</span><strong>${value}</strong><span>${note}</span></div>`).join('');
   $('funnel').innerHTML=[['발급 / 사용 코드',`${s.invites} / ${s.usedInvites}`],['가입자',s.users],['텔레그램 연결',s.connected],['활성 알림 보유자',s.activeUsers]].map(([t,n])=>`<div>${t}<strong>${n}</strong></div>`).join('');
   renderUsers(); renderHours();
+  renderInvites();
   const max=Math.max(1,...data.venues.map(v=>v.users));
   $('venues').innerHTML=data.venues.map(v=>`<div class="venue"><div class="venue-top"><b>${escape(v.name)}</b><span>${v.users}명 · ${v.watches}개 · 발송 ${v.sent}회</span></div><div class="bar"><i style="width:${v.users/max*100}%"></i></div></div>`).join('');
   $('daily').innerHTML=data.daily.slice().reverse().map(d=>`<tr><td>${d.date}</td><td>${d.visits}</td><td>${d.created}</td><td>${d.sent}</td><td>${d.failed}</td></tr>`).join('');
@@ -57,14 +62,14 @@ function renderUsers(){
   $('users').innerHTML=users.map(u=>{
     const ranked={}; u.watches.forEach(w=>(w.venues || []).forEach(v=>ranked[v]=(ranked[v]||0)+1));
     const top=Object.entries(ranked).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([id])=>venueName(id)).join(', ') || '—';
-    return `<tr><td><button class="name" data-user="${escape(u.id)}">${escape(u.name)}</button><span class="sub">${escape(date(u.createdAt))}${u.enabled?'':' · 비활성'}</span></td><td>${u.telegramConnected?'연결 완료':'미연결'}</td><td>${u.activeWatches}</td><td>${u.created} / ${u.deleted}</td><td>${u.visits}회 / ${u.visitDays}일</td><td>${u.pageViews}</td><td>${u.sent} / ${u.failed}</td><td>${escape(date(u.lastVisit))}</td><td>${escape(top)}</td></tr>`;
-  }).join('') || '<tr><td colspan="9">표시할 사용자가 없습니다.</td></tr>';
+    return `<tr><td><button class="name" data-user="${escape(u.id)}">${escape(u.name)}</button><span class="sub">${escape(date(u.createdAt))}${u.enabled?'':' · 비활성'}</span></td><td>${u.telegramConnected?'연결 완료':'미연결'}</td><td>${u.activeWatches}</td><td>${u.created} / ${u.deleted}</td><td>${u.visits}회 / ${u.visitDays}일</td><td>${u.pageViews}</td><td>${u.sent} / ${u.failed}</td><td>${escape(date(u.lastVisit))}</td><td>${escape(top)}</td><td><button data-access-user="${escape(u.id)}" data-enabled="${!u.enabled}">${u.enabled ? "사용자 차단" : "재활성화"}</button></td></tr>`;
+  }).join('') || '<tr><td colspan="10">표시할 사용자가 없습니다.</td></tr>';
 }
 function renderHours(){const key=$('hourMetric').value;const max=Math.max(1,...data.hours.map(h=>h[key]));$('hours').innerHTML=data.hours.map(h=>`<div class="hour" style="background:rgba(117,152,83,${.08+h[key]/max*.45})">${String(h.hour).padStart(2,'0')}시<strong>${h[key]}</strong></div>`).join('');}
 $('users').addEventListener('click',e=>{
   const id=e.target.closest('[data-user]')?.dataset.user;if(!id)return;
   const u=data.users.find(u=>u.id===id); $('detail').hidden=false;$('detailTitle').textContent=u.name+' · 이용 상세';
-  $('detailBody').innerHTML=`<p class="muted">사용자 ID: ${escape(u.id)} · 코드 사용: ${escape(date(u.inviteUsedAt))}</p><h3>현재 보관된 알림</h3><div class="table-wrap"><table><thead><tr><th>테니스장</th><th>날짜</th><th>시간</th><th>설정</th></tr></thead><tbody>${u.watches.map(w=>`<tr><td>${escape((w.venues||[]).map(venueName).join(', '))}</td><td>${escape(w.date)}</td><td>${escape((w.times||[]).join(', '))}</td><td>${w.enabled?'켜짐':'꺼짐'}</td></tr>`).join('') || '<tr><td colspan="4">등록된 알림이 없습니다.</td></tr>'}</tbody></table></div><h3>기간 내 최근 이력 (최대 100건)</h3><div class="table-wrap"><table><thead><tr><th>시각</th><th>활동</th><th>테니스장</th></tr></thead><tbody>${u.events.map(e=>`<tr><td>${escape(date(e.at))}</td><td>${escape(eventNames[e.type]||e.type)}</td><td>${escape((e.venues||[]).map(venueName).join(', '))}</td></tr>`).join('') || '<tr><td colspan="3">수집된 이력이 없습니다.</td></tr>'}</tbody></table></div>`;
+  $('detailBody').innerHTML=`<p class="muted">사용자 ID: ${escape(u.id)} · 코드 사용: ${escape(date(u.inviteUsedAt))}</p><h3>현재 보관된 알림</h3><div class="table-wrap"><table><thead><tr><th>테니스장</th><th>날짜</th><th>시간</th><th>설정</th></tr></thead><tbody>${u.watches.map(w=>`<tr><td>${escape((w.venues||[]).map(venueName).join(', '))}</td><td>${escape(w.date)}</td><td>${escape(w.anyTime ? '시간대 상관없음' : (w.times||[]).join(', '))}</td><td>${w.enabled?'켜짐':'꺼짐'}</td></tr>`).join('') || '<tr><td colspan="4">등록된 알림이 없습니다.</td></tr>'}</tbody></table></div><h3>기간 내 최근 이력 (최대 100건)</h3><div class="table-wrap"><table><thead><tr><th>시각</th><th>활동</th><th>테니스장</th></tr></thead><tbody>${u.events.map(e=>`<tr><td>${escape(date(e.at))}</td><td>${escape(eventNames[e.type]||e.type)}</td><td>${escape((e.venues||[]).map(venueName).join(', '))}</td></tr>`).join('') || '<tr><td colspan="3">수집된 이력이 없습니다.</td></tr>'}</tbody></table></div>`;
   $('detail').scrollIntoView({behavior:'smooth',block:'start'});
 });
 $('loginForm').addEventListener('submit',e=>{e.preventDefault();token=$('token').value.trim();load();});
@@ -74,4 +79,28 @@ $('generateInvite').addEventListener('click', generateInvite);
 $('copyInvite').addEventListener('click', async () => {
   const copied = await copyText($('inviteCode').textContent);
   $('inviteMessage').textContent = copied ? '초대코드를 복사했습니다.' : '초대코드를 선택해 복사해주세요.';
+});
+
+function renderInvites() {
+  $('inviteList').innerHTML = (data.invites || []).map(i => '<p><code>'+escape(i.code)+'</code> · '+(i.used ? '가입 완료' : i.enabled ? '가입 가능' : '비활성')+
+    (i.used ? '' : ' <button data-invite="'+escape(i.code)+'" data-enabled="'+!i.enabled+'">'+(i.enabled ? '비활성화' : '활성화')+'</button>')+'</p>').join('') || '발급한 코드가 없습니다.';
+}
+async function changeAccess(button, endpoint) {
+  button.disabled = true;
+  try {
+    const response = await fetch(endpoint, {method:'PATCH',headers:{'x-admin-token':token,'content-type':'application/json'},body:JSON.stringify({enabled:button.dataset.enabled === 'true'})});
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || '변경 실패');
+    await load();
+    $('message').textContent = '이용 상태를 변경했습니다.';
+  } catch(error) { $('message').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+$('users').addEventListener('click', e => {
+  const button = e.target.closest('[data-access-user]');
+  if (button) changeAccess(button, '/api/admin/users/'+encodeURIComponent(button.dataset.accessUser));
+});
+$('inviteList').addEventListener('click', e => {
+  const button = e.target.closest('[data-invite]');
+  if (button) changeAccess(button, '/api/admin/invites/'+encodeURIComponent(button.dataset.invite));
 });

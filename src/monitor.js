@@ -427,6 +427,7 @@ function mergeProviderStart(state, providerIds, { now, source, slotKey, activePr
 }
 
 function mergeProviderFailure(state, {
+  targetWatches = [],
   providerIds,
   targetVenueIds,
   checked,
@@ -447,11 +448,12 @@ function mergeProviderFailure(state, {
     skippedProviders: newlySkippedProviders,
     vacancyCount: 0,
     alertCount: 0
-  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt }));
+  }), now, cycleLogDetails({ checked, watches: targetWatches, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
 function mergeProviderSuccess(state, {
+  targetWatches = [],
   providerIds,
   checked,
   reservations,
@@ -508,7 +510,7 @@ function mergeProviderSuccess(state, {
     alertCount,
     alertFailureCount: notificationErrors.length,
     suppressedAlertCount
-  }), now, cycleLogDetails({ checked, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt, notificationErrors }));
+  }), now, cycleLogDetails({ checked, watches: targetWatches, activeVenueIds: targetVenueIds, skippedProviders: newlySkippedProviders, checkedAt, notificationErrors }));
   finishRunState(state, now, activeVenueIds, checked, skippedProviders, checkedAt);
 }
 
@@ -685,6 +687,7 @@ export async function runCheckCycle({
       await mutateState((latest) => {
         const latestContext = activeContextFor(latest, now);
         mergeProviderFailure(latest, {
+          targetWatches,
           providerIds: selectedProviderIds,
           targetVenueIds,
           checked,
@@ -737,7 +740,11 @@ export async function runCheckCycle({
   for (const group of notificationGroups(notificationPlan.notifications)) {
     let delivered = false;
     try {
-      const user = notificationPlan.usersById[group.watch.userId];
+      // Re-read access immediately before sending: an admin may block a user
+      // while an external provider query is still running.
+      const latestAccess = await stateLoader();
+      const user = latestAccess.users?.find(user => user.id === group.watch.userId);
+      if (!latestAccess.watches?.some(w => w.id === group.watch.id && w.enabled !== false)) continue;
       if (!user?.telegramChatId || user.enabled === false) continue;
       const message = group.notifications.length > 1
         ? buildNotificationDigest(group.notifications.map((notification) => notification.item))
@@ -783,6 +790,7 @@ export async function runCheckCycle({
     await mutateState((latest) => {
       const latestContext = activeContextFor(latest, now);
       mergeProviderSuccess(latest, {
+        targetWatches,
         providerIds: selectedProviderIds,
         checked,
         reservations,
@@ -932,9 +940,10 @@ function addSkipLogs(state, skippedProviders, now) {
   return newlySkippedProviders;
 }
 
-function cycleLogDetails({ checked, activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {
+function cycleLogDetails({ checked, watches = [], activeVenueIds, skippedProviders = [], checkedAt, notificationErrors = [] }) {
   const errors = (checked?.[CHECK_META]?.errors || []).map(safeDiagnostic);
   return {
+    watchTargets: watches.map(w => ({ watchId: w.id, userId: w.userId, venueIds: w.venues, date: w.date })),
     kind: errors.length > 0 ? "provider-error" : "provider-check",
     checkedAt,
     facilities: activeVenueIds.map((venueId) => facilityLogDetail(venueId, checked, errors)),

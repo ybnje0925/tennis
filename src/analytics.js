@@ -33,7 +33,7 @@ export function buildDashboard(state, days = 7, now = new Date()) {
       activeWatches: live.filter(w => w.userId === u.id).length,
       created: count(own, 'watch_created'), deleted: count(own, 'watch_deleted'),
       sent: count(own, 'telegram_sent'), failed: count(own, 'telegram_failed'),
-      watches: watches.map(({ id, venues, date, times, enabled }) => ({ id, venues, date, times, enabled })),
+      watches: watches.map(({ id, venues, date, times, anyTime, enabled }) => ({ id, venues, date, times, anyTime, enabled })),
       events: own.filter(e => !['visit', 'activity'].includes(e.type)).slice(-100).reverse()
     };
   });

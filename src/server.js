@@ -1,3 +1,5 @@
+import { resolveWatchTimes } from "./watchTimes.js";
+import { userSystemStatus } from "./userStatus.js";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -5,6 +7,8 @@ import { config } from "./config.js";
 import { OLYMPIC_TIME_SLOTS, ONE_HOUR_TIME_SLOTS, PROVIDERS, TIME_SLOTS, VENUES } from "./constants.js";
 import {
   addWatch,
+  setUserEnabled,
+  setInviteEnabled,
   claimInviteCode,
   claimDeviceLinkCode,
   connectTelegramLinkToken,
@@ -128,6 +132,24 @@ app.post('/api/admin/invites', requireAdmin, async (req, res, next) => {
     const invite = await addInviteCode();
     res.set('Cache-Control', 'no-store');
     res.status(201).json({ code: invite.code, createdAt: invite.createdAt });
+  } catch (error) { next(error); }
+});
+app.patch("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
+  try {
+    const user = await setUserEnabled(req.params.id, req.body.enabled);
+    res.set("Cache-Control", "no-store").json({ user: publicUser(user) });
+  } catch (error) { next(error); }
+});
+app.get("/api/admin/invites", requireAdmin, async (req, res, next) => {
+  try {
+    const state = await loadState();
+    res.set("Cache-Control", "no-store").json(state.inviteCodes.map(({ code, createdAt, enabled, used, usedBy }) => ({ code, createdAt, enabled: enabled !== false, used: Boolean(used), usedBy })));
+  } catch (error) { next(error); }
+});
+app.patch("/api/admin/invites/:code", requireAdmin, async (req, res, next) => {
+  try {
+    const invite = await setInviteEnabled(req.params.code, req.body.enabled);
+    res.set("Cache-Control", "no-store").json({ code: invite.code, enabled: invite.enabled });
   } catch (error) { next(error); }
 });
 app.post('/api/analytics/visit', requireUser, async (req, res, next) => {
@@ -328,7 +350,7 @@ function buildStatusPayload(state, userId, now) {
   );
 
   return {
-    ...state.system,
+    ...userSystemStatus(state, userId),
     schedulerVersion: SCHEDULER_VERSION,
     schedulerPolicy: {
       timeZone: SCHEDULER_QUIET_HOURS.timeZone,
@@ -365,7 +387,8 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
     if (!req.user.telegramConnected || !req.user.telegramChatId) {
       return res.status(403).json({ error: "텔레그램 연결 후 알림을 등록할 수 있습니다." });
     }
-    const { venues, date, times } = req.body;
+    const { venues, date, anyTime } = req.body;
+    const times = resolveWatchTimes(req.body);
     const venueValidation = validateVenueSelection(venues);
     if (!venueValidation.ok) throw new Error(venueValidation.message);
     if (!date) throw new Error("날짜를 선택하세요.");
@@ -385,6 +408,7 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
       venue: venues.includes("olympic") ? "olympic" : undefined,
       venues,
       date,
+      anyTime,
       times
     });
     res.status(201).json({ watch });

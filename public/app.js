@@ -582,7 +582,7 @@ function renderWatches(watches) {
 function renderWatchCard(watch) {
       const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
       const date = formatWatchDate(watch.date);
-      const timeLabels = watch.times.map((time) => `<span>${watch.venues.includes("myeonmok") ? myeonmokSlotLabel(watch.date, time) : time}</span>`).join("");
+      const timeLabels = watch.anyTime ? "<span>시간대 상관없음</span>" : watch.times.map((time) => `<span>${watch.venues.includes("myeonmok") ? myeonmokSlotLabel(watch.date, time) : time}</span>`).join("");
       const expired = isExpiredWatchDate(watch.date);
       const state = expired ? "만료됨" : watch.enabled === false ? "일시정지" : "알림 켜짐";
       return `
@@ -657,7 +657,8 @@ form.addEventListener("submit", async (event) => {
   const payload = {
     venues: data.getAll("venues"),
     date: data.get("date"),
-    times: data.getAll("times")
+    anyTime: data.get("anyTime") === "on",
+    times: data.get("anyTime") === "on" ? [...timeSlotsEl.querySelectorAll("input[name=times]")].map(input => input.value) : data.getAll("times")
   };
   try {
     await request("/api/watches", { method: "POST", body: JSON.stringify(payload) });
@@ -805,7 +806,15 @@ function renderTimeSlots(slots) {
   timeSlotsEl.innerHTML = slots
     .map((slot) => `<label><input type="checkbox" name="times" value="${slot}" ${selected.has(slot) ? "checked" : ""} /> ${new FormData(form).getAll("venues").includes("myeonmok") ? myeonmokSlotLabel(new FormData(form).get("date"), slot) : slot}</label>`)
     .join("");
+  syncAnyTime();
 }
+
+function syncAnyTime() {
+  const any = form.elements.anyTime.checked;
+  timeSlotsEl.querySelectorAll("input").forEach(input => { input.disabled = any; });
+  timeSlotsEl.style.opacity = any ? "0.5" : "";
+}
+form.elements.anyTime.addEventListener("change", syncAnyTime);
 
 watchesEl.addEventListener("click", async (event) => {
   const deleteId = event.target?.dataset?.delete;

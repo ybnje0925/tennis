@@ -1,3 +1,4 @@
+import { resolveWatchTimes } from "./watchTimes.js";
 import { disableExpiredWatches } from "./watchExpiry.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -97,6 +98,7 @@ function validateSeasonalWatch(input) {
 }
 
 export async function addWatch(input) {
+  input = { ...input, times: resolveWatchTimes(input) };
   validateSeasonalWatch(input);
   return updateState((state) => {
     const watch = {
@@ -106,6 +108,7 @@ export async function addWatch(input) {
       venues: input.venues,
       venue: input.venue,
       date: normalizeDate(input.date) || input.date,
+      anyTime: input.anyTime === true,
       times: (input.times || []).map((time) => normalizeTimeSlot(time) || time),
       enabled: true,
       createdAt: new Date().toISOString()
@@ -134,6 +137,16 @@ export async function updateWatch(id, patch, userId = null) {
     const watch = state.watches.find((item) => item.id === id);
     if (!watch) throw new Error("알림 조건을 찾을 수 없습니다.");
     if (userId && watch.userId !== userId) throw new Error("다른 사용자의 알림 조건은 변경할 수 없습니다.");
+    if (["date", "venues", "times", "anyTime"].some(field => field in patch)) {
+      const candidate = { ...watch, ...patch };
+      patch = { ...patch, times: resolveWatchTimes(candidate) };
+      if (!(watch.venues || []).includes("myeonmok") && !(watch.venues || []).some(id => id.startsWith("nowon-"))) {
+        if (["date", "venues"].some(field => field in patch)) throw new Error("시설이나 날짜를 변경하려면 새 알림을 등록하세요.");
+        if (!Array.isArray(patch.times) || !patch.times.length) throw new Error("시간대를 선택하세요.");
+        watch.times = patch.times;
+      }
+      watch.anyTime = candidate.anyTime === true;
+    }
     if (["venues", "date", "times"].some(field => field in patch) && ((watch.venues || []).includes("myeonmok") || (patch.venues || []).includes("myeonmok"))) {
       const candidate = { ...watch, ...patch };
       if (!candidate.venues?.includes("myeonmok")) throw new Error("다른 시설은 새 알림 조건으로 등록하세요.");
@@ -350,13 +363,28 @@ export async function setUserEnabled(userId, enabled) {
   return updateState((state) => {
     const user = state.users.find((item) => item.id === userId);
     if (!user) throw new Error("사용자를 찾을 수 없습니다.");
+    if (typeof enabled !== "boolean") throw new Error("활성 여부는 참 또는 거짓이어야 합니다.");
     user.enabled = enabled;
+    recordEvent(state, enabled ? "user_enabled" : "user_disabled", { userId });
     if (!enabled) {
+      state.deviceLinkCodes = state.deviceLinkCodes.filter(item => item.userId !== userId);
+      state.telegramLinkTokens = state.telegramLinkTokens.filter(item => item.userId !== userId);
       for (const watch of state.watches.filter((item) => item.userId === userId)) {
         watch.enabled = false;
       }
     }
     return user;
+  });
+}
+
+export async function setInviteEnabled(code, enabled) {
+  if (typeof enabled !== "boolean") throw new Error("활성 여부는 참 또는 거짓이어야 합니다.");
+  return updateState(state => {
+    const invite = state.inviteCodes.find(item => item.code === code);
+    if (!invite) throw new Error("초대코드를 찾을 수 없습니다.");
+    if (invite.used) throw new Error("이미 가입한 사용자는 사용자 차단 기능을 사용하세요.");
+    invite.enabled = enabled;
+    return invite;
   });
 }
 
