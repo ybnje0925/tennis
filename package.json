@@ -26,7 +26,8 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "node-cron": "^3.0.3",
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "@hyunbinseo/holidays-kr": "5.2027.2"
   },
   "devDependencies": {
     "archiver": "^7.0.1",

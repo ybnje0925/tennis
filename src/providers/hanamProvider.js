@@ -1,3 +1,4 @@
+import { canCheckMisaDate, isMisaVenue } from "../misaMonitoring.js";
 import { PROVIDERS, TIME_SLOTS, VENUES } from "../constants.js";
 import { diagnosticError } from "../diagnostics.js";
 import { normalizeDate, normalizeTimeSlot } from "../normalization.js";
@@ -96,7 +97,8 @@ export function hanamVenueIdsFromWatches(watches) {
 }
 
 export async function checkHanamVenues(venueIds, options = {}) {
-  const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "hanam");
+  const now = options.now || new Date();
+  const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "hanam" && (!isMisaVenue(venueId) || (options.venueDates?.[venueId] || watchDatesForVenue(options.watches, venueId)).some(date => canCheckMisaDate(date, now))));
   if (ids.length === 0) return {};
 
   const timer = createProviderTimer("하남");
@@ -294,7 +296,7 @@ async function postJson(url, body, cookie, referer) {
 }
 
 async function checkMisaVenue(venueId, options) {
-  const dates = options.venueDates?.[venueId] || watchDatesForVenue(options.watches, venueId);
+  const dates = (options.venueDates?.[venueId] || watchDatesForVenue(options.watches, venueId)).filter(date => canCheckMisaDate(date, options.now || new Date()));
   const results = [];
   for (const date of dates) {
     const requestedTimes = watchTimesForVenue(options.watches, venueId, date, "misa");

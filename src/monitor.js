@@ -1,3 +1,4 @@
+import { filterMisaMonitoringWatches } from "./misaMonitoring.js";
 import cron from "node-cron";
 import crypto from "node:crypto";
 import { config } from "./config.js";
@@ -395,7 +396,7 @@ function createStateUpdater(stateLoader, stateSaver, stateUpdater) {
 }
 
 function activeContextFor(state, now) {
-  const activeWatches = getActiveWatches(state, now);
+  const activeWatches = filterMisaMonitoringWatches(getActiveWatches(state, now), now);
   const grouped = groupActiveWatchesByVenue(activeWatches);
   const venueDates = buildVenueDateTargets(grouped);
   const activeVenueIds = Object.keys(venueDates).filter((venueId) => (
@@ -1233,7 +1234,7 @@ export function startScheduler() {
   const expression = "* * * * *";
   loadState()
     .then((state) => {
-      const activeWatches = getActiveWatches(state, new Date());
+      const activeWatches = filterMisaMonitoringWatches(getActiveWatches(state, new Date()), new Date());
       const grouped = groupActiveWatchesByVenue(activeWatches);
       const activeVenueIds = Object.keys(buildVenueDateTargets(grouped)).filter((venueId) => (
         VENUES[venueId]?.provider !== "olympic" || config.enableOlympicProvider
