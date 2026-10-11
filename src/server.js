@@ -1,3 +1,4 @@
+import { deliveryHistory } from "./deliveryHistory.js";
 import { resolveWatchTimes } from "./watchTimes.js";
 import { userSystemStatus } from "./userStatus.js";
 import express from "express";
@@ -165,7 +166,7 @@ app.get("/health", (req, res) => {
 
 app.get("/api/options", requireUser, (req, res) => {
   res.json({
-    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl, region }) => ({ id, name, provider, slotMinutes, publicUrl, region: region || ({ gangdong: "서울 강동구", songpa: "서울 송파구", olympic: "서울 송파구", hanam: "경기 하남시" })[provider] })),
+    venues: Object.values(VENUES).map(({ id, name, provider, slotMinutes, publicUrl, region, courts }) => ({ id, name, provider, slotMinutes, publicUrl, courts, region: region || ({ gangdong: "서울 강동구", songpa: "서울 송파구", olympic: "서울 송파구", hanam: "경기 하남시" })[provider] })),
     venueGroups: {
       seasonal: Object.values(VENUES).filter(venue => venue.seasonalSlots),
       twoHour: Object.values(VENUES).filter((venue) => venue.slotMinutes === 120).map(({ id, name, slotMinutes, publicUrl }) => ({ id, name, slotMinutes, publicUrl })),
@@ -265,6 +266,18 @@ app.post("/api/telegram/webhook", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/deliveries", (req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  // Authentication storage failures must not leak internal errors through the global handler.
+  requireUser(req, res, error => {
+    if (error) return res.status(503).json({ error: "발송 내역을 불러오지 못했습니다. 잠시 후 다시 시도하세요." });
+    next();
+  });
+}, async (req, res) => {
+  try { res.json(deliveryHistory(await loadState(), req.user.id, req.query)); }
+  catch { res.status(503).json({ error: "발송 내역을 불러오지 못했습니다. 잠시 후 다시 시도하세요." }); }
 });
 
 app.get("/api/watches", requireUser, async (req, res, next) => {
@@ -387,7 +400,7 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
     if (!req.user.telegramConnected || !req.user.telegramChatId) {
       return res.status(403).json({ error: "텔레그램 연결 후 알림을 등록할 수 있습니다." });
     }
-    const { venues, date, anyTime } = req.body;
+    const { venues, date, anyTime, courts, durationMinutes } = req.body;
     const times = resolveWatchTimes(req.body);
     const venueValidation = validateVenueSelection(venues);
     if (!venueValidation.ok) throw new Error(venueValidation.message);
@@ -404,6 +417,7 @@ app.post("/api/watches", requireUser, async (req, res, next) => {
     const provider = VENUES[venues[0]]?.provider;
     const watch = await addWatch({
       userId: req.user.id,
+      ...(provider === "nowon" ? { courts, durationMinutes } : {}),
       provider,
       venue: venues.includes("olympic") ? "olympic" : undefined,
       venues,

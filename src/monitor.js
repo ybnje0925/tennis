@@ -1,4 +1,6 @@
+import { beginDelivery, finishDelivery } from "./deliveryHistory.js";
 import { filterMisaMonitoringWatches } from "./misaMonitoring.js";
+import { filterNowonSlotsByWatch, isNowonWatch, nowonKeyFor } from "./providers/nowonSlots.js";
 import cron from "node-cron";
 import crypto from "node:crypto";
 import { config } from "./config.js";
@@ -31,6 +33,7 @@ export const SCHEDULER_QUIET_HOURS = config.schedulerQuietHours;
 
 export function keyFor(item) {
   if (item.provider === "jungnang" && item.part) return reservationKey({ ...item, time: myeonmokSlots(item.date)[item.part - 1] || item.time });
+  if (item.provider === "nowon") return nowonKeyFor(item);
   if (item.provider === "olympic") return olympicKeyFor(item);
   if (item.provider === "hanam" && item.courtNo) return hanamKeyFor(item);
   return reservationKey(item);
@@ -100,6 +103,25 @@ export function findNotifications(state, reservations) {
         const wasUnavailable = previous !== true;
         const alreadySent = state.sentNotifications[`${watch.id}|${key}`];
         if (wasUnavailable || !alreadySent) notifications.push({ watch, item, key });
+      }
+      continue;
+    }
+
+    if (isNowonWatch(watch)) {
+      const matches = filterNowonSlotsByWatch(reservations, watch);
+      const currentKeys = new Set(matches.map(keyFor));
+      for (const sentKey of Object.keys(state.sentNotifications || {})) {
+        if (!sentKey.startsWith(watch.id + "|nowon|")) continue;
+        const key = sentKey.slice(watch.id.length + 1);
+        const prior = state.lastAvailability[key];
+        if (!prior || currentKeys.has(key)) continue;
+        // Missing/failed detail rows cannot mean a previously available slot closed.
+        const explicitlyClosed = reservations.some(slot => slot.provider === "nowon" && slot.available === false && slot.venue === prior.venue && slot.date === prior.date && String(slot.courtNo) === String(prior.courtNo) && slot.startTime >= prior.startTime && slot.endTime <= prior.endTime);
+        if (explicitlyClosed) state.lastAvailability[key] = { ...prior, available: false };
+      }
+      for (const item of matches) {
+        const key = keyFor(item);
+        if (!availabilityValue(state.lastAvailability[key]) || !state.sentNotifications[watch.id + "|" + key]) notifications.push({ watch, item, key });
       }
       continue;
     }
@@ -473,12 +495,21 @@ function mergeProviderSuccess(state, {
     const stats = providerCheckStats(providerId, targetVenueIds, checked, checkErrors);
     finishProviderRuntime(state, providerId, checkedAt, stats.failed > 0 ? providerErrorMessage(checkErrors, providerId) : null, stats);
   }
+  if (providerIds.includes("nowon")) {
+    const failure = checkErrors.find(error => error.provider === "nowon");
+    state.system.providers.nowon.lastErrorType = failure?.type || null;
+    state.system.providers.nowon.lastErrorCategory = failure?.userCategory || null;
+  }
   const vacancyCount = countMatchingAvailableItems(state, reservations);
 
   for (const venueId of Object.keys(checked)) {
     if (venueId === CHECK_META) continue;
     const count = checked[venueId]?.length ?? 0;
     state.system.venues[venueId] = { ok: count > 0, checkedAt, count };
+    if (VENUES[venueId]?.provider === "nowon") {
+      state.system.nowonSnapshots ||= {};
+      state.system.nowonSnapshots[venueId] = { checkedAt, items: checked[venueId] };
+    }
     if (venueId === "myeonmok") state.system.myeonmokSnapshot = { checkedAt, items: checked[venueId] };
   }
 
@@ -740,6 +771,7 @@ export async function runCheckCycle({
   const notificationErrors = [];
   for (const group of notificationGroups(notificationPlan.notifications)) {
     let delivered = false;
+    let deliveryId;
     try {
       // Re-read access immediately before sending: an admin may block a user
       // while an external provider query is still running.
@@ -750,10 +782,13 @@ export async function runCheckCycle({
       const message = group.notifications.length > 1
         ? buildNotificationDigest(group.notifications.map((notification) => notification.item))
         : buildNotificationMessage(group.notifications[0].item);
-      await notifier(message, user.telegramChatId);
+      deliveryId = await mutateState(latest => beginDelivery(latest, group, message));
+      if (!deliveryId) continue;
+      const response = await notifier(message, user.telegramChatId);
       delivered = true;
       await mutateState((latest) => {
-        recordEvent(latest, 'telegram_sent', { userId: group.watch.userId, watchId: group.watch.id, venues: [...new Set(group.notifications.map(n => n.item.venue))] });
+        finishDelivery(latest, deliveryId, 'sent', response, Number.isFinite(response?.result?.date) ? new Date(response.result.date * 1000).toISOString() : new Date().toISOString());
+        recordEvent(latest, 'telegram_sent', { deliveryId, userId: group.watch.userId, watchId: group.watch.id, venues: [...new Set(group.notifications.map(n => n.item.venue))] });
         for (const notification of group.notifications) {
           latest.sentNotifications[`${notification.watch.id}|${notification.key}`] = checkedAt;
           latest.lastAvailability[notification.key] = {
@@ -774,16 +809,22 @@ export async function runCheckCycle({
     } catch (error) {
       errors.push(error.message);
       if (!delivered) {
-        await mutateState(latest => recordEvent(latest, 'telegram_failed', { userId: group.watch.userId, watchId: group.watch.id, venues: [...new Set(group.notifications.map(n => n.item.venue))] })).catch(e => console.error('발송 통계 기록 실패:', e.message));
+        await mutateState(latest => {
+          if (deliveryId && !error.deliveryUncertain) finishDelivery(latest, deliveryId, 'failed');
+          recordEvent(latest, 'telegram_failed', {
+            deliveryId, userId: group.watch.userId, watchId: group.watch.id,
+            venues: [...new Set(group.notifications.map(n => n.item.venue))]
+          });
+        }).catch(e => console.error('발송 통계 기록 실패:', e.message));
       }
       notificationErrors.push({
-        type: "TELEGRAM_SEND_FAILED",
-        message: error.message,
+        type: delivered ? "DELIVERY_RECORD_FAILED" : error.deliveryUncertain ? "TELEGRAM_OUTCOME_UNKNOWN" : "TELEGRAM_SEND_FAILED",
+        message: delivered ? "메시지 발송 후 이력 저장 실패 · 결과 확인 필요" : error.deliveryUncertain ? "발송 응답 확인 불가 · 자동 재발송 보류" : error.message,
         watchId: group.watch.id,
         userId: group.watch.userId,
         count: group.notifications.length
       });
-      console.error(`Telegram 알림 발송 실패: ${error.message}`);
+      console.error(`Telegram ${delivered ? "발송 후 기록 실패" : error.deliveryUncertain ? "발송 결과 확인 불가" : "알림 발송 실패"}: ${error.message}`);
     }
   }
 
@@ -1071,7 +1112,7 @@ export function buildCycleSummary({ checked, activeVenueIds, skippedProviders = 
   const parts = [allFailed ? "조회실패" : "조회완료"];
   const skipped = new Map(skippedProviders.map((item) => [item.provider, item.reason]));
 
-  for (const providerId of ["gangdong", "songpa", "olympic", "hanam", "jungnang"]) {
+  for (const providerId of ["gangdong", "songpa", "olympic", "hanam", "jungnang", "nowon"]) {
     if (!activeProviders.has(providerId)) continue;
     if (skipped.has(providerId)) {
       parts.push(`${providerLabel(providerId)} SKIP(${skipped.get(providerId)})`);
@@ -1102,6 +1143,7 @@ function providerLabel(providerId) {
   if (providerId === "olympic") return "올림픽";
   if (providerId === "hanam") return "하남";
   if (providerId === "jungnang") return "중랑";
+  if (providerId === "nowon") return "노원";
   return providerId;
 }
 
@@ -1192,6 +1234,11 @@ export function countMatchingAvailableItems(state, reservations) {
       for (const item of filterOlympicSlotsByWatch(olympicSlots, normalizeOlympicWatch(watch))) {
         matches.add(keyFor(item));
       }
+      continue;
+    }
+
+    if (isNowonWatch(watch)) {
+      for (const item of filterNowonSlotsByWatch(reservations, watch)) matches.add(keyFor(item));
       continue;
     }
 

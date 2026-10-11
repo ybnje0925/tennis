@@ -1,4 +1,5 @@
 import { facilityResultText } from "./availabilitySummary.js";
+import { NOWON_FACILITIES, NOWON_TIMES, validateNowonWatch } from "./nowonRules.js";
 import { formatKoreanDateWithWeekday, isDateBeforeKstToday } from "./dateFormat.js";
 import { myeonmokSlots, myeonmokSlotLabel } from "./myeonmokSlots.js";
 import { sortWatchesByReservationTime } from "./watchSorting.js";
@@ -38,6 +39,9 @@ const myeongilStatusEl = document.querySelector("#myeongilStatus");
 const olympicStatusEl = document.querySelector("#olympicStatus");
 const songpaStatusEl = document.querySelector("#songpaStatus");
 const jungnangStatusEl = document.querySelector("#jungnangStatus");
+const nowonStatusEl = document.querySelector("#nowonStatus");
+const nowonFieldsEl = document.querySelector("#nowonFields");
+const nowonCourtEl = document.querySelector("#nowonCourt");
 const hanamStatusEl = document.querySelector("#hanamStatus");
 const reservationLinks = {
   jungnang: document.querySelector("#jungnangLink"),
@@ -45,6 +49,7 @@ const reservationLinks = {
   myeongil: document.querySelector("#myeongilLink"),
   olympic: document.querySelector("#olympicLink"),
   songpa: document.querySelector("#songpaLink"),
+  nowon: document.querySelector("#nowonLink"),
   hanam: document.querySelector("#hanamLink")
 };
 const venueGroupsEl = document.querySelector("#venueGroups");
@@ -67,6 +72,7 @@ let lastVisitPing = 0;
 let trackedPageUser = null;
 let seoulAreas = [];
 let displayedWatches = [];
+let watchFilter = "all";
 let displayActiveWatchCount = null;
 
 async function request(path, options) {
@@ -124,6 +130,7 @@ function formatProviderStatus(status, providerId, active) {
   if (provider.status === "running") {
     return `${stateLabel} · ${formatDateTime(provider.lastStartedAt)} 시작`;
   }
+  if (providerId === "nowon") return `${provider.lastError ? (provider.lastErrorCategory || "조회 오류") + (provider.lastSuccessfulCheckAt ? " · 이전 성공 결과(오래됨)" : " · 성공 결과 없음") : stateLabel} · 시도 ${formatDateTime(provider.lastAttemptAt)} · 성공 ${formatDateTime(provider.lastSuccessfulCheckAt)} · 다음 ${formatDateTime(provider.nextCheckAt)}`;
   if (providerId === "jungnang") return `${provider.lastError ? "조회 실패 · 이전 성공 결과" : stateLabel} · 시도 ${formatDateTime(provider.lastAttemptAt)} · 성공 ${formatDateTime(provider.lastSuccessfulCheckAt)} · 다음 ${formatDateTime(provider.nextCheckAt)}`;
   return `${stateLabel} · ${formatDateTime(provider.lastCheckedAt)} → ${formatDateTime(provider.nextCheckAt)}`;
 }
@@ -154,6 +161,7 @@ async function loadSession() {
   appContentEl.classList.toggle("hidden", !session.authenticated);
   telegramPanel.classList.toggle("hidden", !session.authenticated || currentUser.telegramConnected);
   telegramConnectedPanel.classList.toggle("hidden", !session.authenticated || !currentUser.telegramConnected);
+  document.querySelector("#topConnection").textContent = currentUser?.telegramConnected ? "✓ 텔레그램 연결됨" : "텔레그램 연결 필요";
   form.querySelector("button[type='submit']").disabled = !currentUser?.telegramConnected;
   if (session.authenticated && !currentUser.telegramConnected) {
     setStatus("텔레그램 연결 후 알림을 등록할 수 있습니다.");
@@ -168,6 +176,7 @@ function updateReservationLinks() {
     myeongil: venuePublicUrls.myeongil,
     olympic: venuePublicUrls.olympic,
     songpa: providerPublicUrls.songpa,
+    nowon: providerPublicUrls.nowon,
     hanam: providerPublicUrls.hanam
   };
 
@@ -203,6 +212,7 @@ async function loadStatus() {
   myeongilStatusEl.textContent = formatProviderStatus(status, "gangdong", gangdongActive);
   olympicStatusEl.textContent = formatProviderStatus(status, "olympic", status.activeVenues?.olympic);
   songpaStatusEl.textContent = formatProviderStatus(status, "songpa", songpaActive);
+  nowonStatusEl.textContent = formatProviderStatus(status, "nowon", Object.keys(NOWON_FACILITIES).some(id => status.activeVenues?.[id]));
   hanamStatusEl.textContent = formatProviderStatus(status, "hanam", hanamActive);
   jungnangStatusEl.textContent = formatProviderStatus(status, "jungnang", Boolean(status.activeVenues?.myeonmok));
   const activeWatchCount = displayActiveWatchCount ?? Number(status.currentUserActiveWatchCount || 0);
@@ -216,7 +226,10 @@ async function loadStatus() {
   schedulerPolicyEl.textContent = quietHoursActive
     ? "매일 한국 시간 01:00~06:00 자동 중지"
     : "활성 알림이 있을 때만 확인 · 매일 01:00~06:00 자동 중지";
+  document.querySelector("#homeStatusBadge").textContent = monitoringTitleEl.textContent;
+  document.querySelector("#homeStatusTimes").textContent = `최근 ${lastCheckedEl.textContent} · 다음 ${nextCheckEl.textContent}`;
   renderLogs(status);
+  document.querySelector("#homeMonitor").textContent = `${monitoringTitleEl.textContent} · 최근 ${lastCheckedEl.textContent} · 다음 ${nextCheckEl.textContent}`;
   buildInfoEl.textContent = `build ${shortCommit(status.buildCommit)} · scheduler ${status.schedulerVersion}`;
 }
 
@@ -351,7 +364,7 @@ function matchingLogDetail(line, logId, indexedDetail) {
     ? indexedDetail?.logId === logId ? indexedDetail : null
     : indexedDetail?.line === line ? indexedDetail : null;
   if (!detail) return null;
-  const labels = { jungnang: "중랑", gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
+  const labels = { nowon: "노원", jungnang: "중랑", gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
   return (detail.errors || []).every((error) => !error?.provider || line.includes(labels[error.provider] || error.provider)) ? detail : null;
 }
 
@@ -552,9 +565,13 @@ async function loadWatches() {
   const watches = await request("/api/watches");
   displayedWatches = watches;
   renderWatches(watches);
+  document.querySelector("#heroCount").textContent = `지금 ${displayActiveWatchCount}개의 조건을 확인하고 있어요.`;
 }
 
 function renderWatches(watches) {
+  const home = document.querySelector('[data-screen="home"]');
+  home.querySelectorAll('.intro,.hero,#homeStatusLine,#watchFilters,.section-heading').forEach(el => el.classList.toggle('hidden', watches.length === 0));
+  document.querySelector('#emptyHomeTitle').classList.toggle('hidden', watches.length !== 0);
   const expiredWatches = watches.filter((watch) => isExpiredWatchDate(watch.date));
   const activeWatches = watches.filter((watch) => watch.enabled !== false && !isExpiredWatchDate(watch.date));
   displayActiveWatchCount = activeWatches.length;
@@ -562,35 +579,28 @@ function renderWatches(watches) {
   activeWatchCountEl.textContent = String(activeWatches.length);
   connectedVenueCountEl.textContent = String(connectedVenues.size);
   watchSummaryEl.textContent = watchSummaryText(activeWatches.length, expiredWatches.length);
+  const categories = { all: watches, active: activeWatches, paused: watches.filter(w => w.enabled === false && !isExpiredWatchDate(w.date)), expired: expiredWatches };
+  document.querySelector("#watchFilters").innerHTML = [["all","전체"],["active","활성"],["paused","일시정지"],["expired","만료"]].map(([key,label]) => `<button class="chip ${watchFilter === key ? "selected" : ""}" data-watch-filter="${key}" aria-pressed="${watchFilter === key}">${label} ${categories[key].length}</button>`).join("");
   if (watches.length === 0) {
-    watchesEl.innerHTML = `<p class="empty">등록된 알림이 없어 현재 계정은 조회 대상이 아닙니다.</p>`;
+    watchesEl.innerHTML = `<div class="empty"><div class="empty-ball"><span class="ball" aria-hidden="true"></span></div><p class="kicker">YOUR NEXT MATCH</p><h2>다음 테니스는<br>어디서 치고 싶으세요?</h2><p>테니스장과 날짜, 시간을 선택해 주세요.<br>빈자리가 나면 텔레그램으로 알려드릴게요.</p><button class="primary wide" data-go="${currentUser?.telegramConnected ? "new" : "settings"}">${currentUser?.telegramConnected ? "＋ 첫 알림 만들기" : "텔레그램 먼저 연결하기"}</button></div>`;
     return;
   }
-  const sortedWatches = sortWatchesByReservationTime(watches);
-  const groups = [
-    { title: "활성 알림", description: "빈자리를 확인 중인 알림", watches: sortedWatches.filter((watch) => watch.enabled !== false && !isExpiredWatchDate(watch.date)), open: true },
-    { title: "일시정지", description: "현재 조회하지 않는 알림", watches: sortedWatches.filter((watch) => watch.enabled === false && !isExpiredWatchDate(watch.date)), open: false },
-    { title: "만료된 알림", description: "지난 날짜의 알림", watches: sortedWatches.filter((watch) => isExpiredWatchDate(watch.date)), open: false }
-  ].filter((group) => group.watches.length > 0);
-  watchesEl.innerHTML = groups.map((group) => `
-    <details class="watch-group" ${group.open ? "open" : ""}>
-      <summary><span><strong>${group.title}</strong><small>${group.description}</small></span><span class="watch-group-count">${group.watches.length}개</span></summary>
-      <div class="watch-group-items">${group.watches.map(renderWatchCard).join("")}</div>
-    </details>
-  `).join("");
+  const filtered = sortWatchesByReservationTime(categories[watchFilter]);
+  watchesEl.innerHTML = filtered.length ? filtered.map(renderWatchCard).join("") : '<div class="notice">이 조건에 해당하는 알림이 없습니다.</div>';
 }
 
 function renderWatchCard(watch) {
-      const venues = watch.venues.map((venue) => venueNames[venue] || venue).join(", ");
+      const venues = watch.venues.map((venue) => escapeHtml(venueNames[venue] || venue)).join(", ");
       const date = formatWatchDate(watch.date);
-      const timeLabels = watch.anyTime ? "<span>시간대 상관없음</span>" : watch.times.map((time) => `<span>${watch.venues.includes("myeonmok") ? myeonmokSlotLabel(watch.date, time) : time}</span>`).join("");
+      let timeLabels = watch.anyTime ? "<span>시간대 상관없음</span>" : watch.times.map((time) => `<span>${watch.venues.includes("myeonmok") ? myeonmokSlotLabel(watch.date, time) : time}</span>`).join("");
+      if (watch.provider === "nowon") timeLabels += `<span>${watch.courts?.length ? watch.courts.join(", ") + "코트" : "전체 코트"} · ${watch.durationMinutes === 120 ? "연속 2시간" : "1시간"}</span>`;
       const expired = isExpiredWatchDate(watch.date);
       const state = expired ? "만료됨" : watch.enabled === false ? "일시정지" : "알림 켜짐";
       return `
-        <details class="watch ${expired ? "expired" : watch.enabled === false ? "disabled" : ""}" ${expired ? "" : "open"}>
+        <details class="watch ${expired ? "expired" : watch.enabled === false ? "disabled" : ""}">
           <summary class="watch-summary">
             <div class="watch-main">
-              <div class="watch-date">
+              <div class="watch-date"><span class="badge ${expired || watch.enabled === false ? "paused" : ""}">${state}</span>
                 <strong>${date.day}</strong>
                 <span>${date.year}</span>
               </div>
@@ -609,7 +619,7 @@ function renderWatchCard(watch) {
           <div class="watch-expanded">
             <div class="watch-expanded-content">
             <p>${expired ? "지난 날짜의 알림입니다. 필요하지 않다면 삭제해 주세요." : "알림 조건을 일시정지하거나 다시 켤 수 있어요."}</p>
-            ${renderMyeonmokResult(watch)}
+
             </div>
             <div class="watch-actions">
               <button type="button" data-toggle="${watch.id}" data-enabled="${watch.enabled !== false}" ${expired ? "disabled" : ""}>
@@ -620,14 +630,6 @@ function renderWatchCard(watch) {
           </div>
         </details>
       `;
-}
-
-function renderMyeonmokResult(watch) {
-  if (!watch.venues.includes("myeonmok")) return "";
-  const result = watch.publicResult;
-  if (!result) return '<div class="watch-public-result"><p>아직 조회하지 않았습니다.</p></div>';
-  const lines = (result.items || []).map(item => `<p>${item.part}부 ${item.time} · ${escapeHtml(item.status)} ${Number.isFinite(item.availableCount) ? "· 잔여 " + item.availableCount + "팀" : ""}${item.warning ? " · 확인 필요" : ""}</p>`).join("");
-  return `<div class="watch-public-result"><p>${result.refreshing ? "조회 진행 중 · 이전 성공 결과" : result.stale ? "최신 조회 실패 · 이전 성공 결과" : "공개 현황"} · 마지막 시도 ${result.lastAttemptAt ? formatDateTime(result.lastAttemptAt) : "아직 조회하지 않음"} · 마지막 성공 ${result.lastSuccessAt ? formatDateTime(result.lastSuccessAt) : "성공한 조회 없음"}</p>${lines}<p>실제 신청 가능 여부는 공식 사이트에서 확인</p><a href="https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php" target="_blank" rel="noopener noreferrer">공식 예약 페이지</a></div>`;
 }
 
 function formatWatchDate(value) {
@@ -662,12 +664,18 @@ form.addEventListener("submit", async (event) => {
     times: data.get("anyTime") === "on" ? [...timeSlotsEl.querySelectorAll("input[name=times]")].map(input => input.value) : data.getAll("times")
   };
   try {
+    if (payload.venues.some(id => NOWON_FACILITIES[id])) {
+      payload.courts = data.get("nowonCourt") ? [data.get("nowonCourt")] : [];
+      payload.durationMinutes = Number(data.get("nowonDuration"));
+      validateNowonWatch(payload);
+    }
     await request("/api/watches", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
     updateOlympicFields();
     setStatus("알림 조건을 등록했습니다. 현재 빈자리가 있으면 1회 알려드립니다.");
     await loadWatches();
     await loadStatus();
+    goScreen("home");
   } catch (error) {
     setStatus(error.message);
   }
@@ -756,11 +764,18 @@ form.addEventListener("change", () => {
 
 function updateVenueSelection() {
   const data = new FormData(form);
-  const seasonal = data.getAll("venues").includes("myeonmok");
+  const selectedIds = data.getAll("venues");
+  const nowon = selectedIds.some(id => NOWON_FACILITIES[id]);
+  const seasonal = selectedIds.includes("myeonmok");
+  nowonFieldsEl.classList.toggle("hidden", !nowon);
+  const previousCourt = nowonCourtEl.value;
+  const courtCount = nowon ? Math.min(...selectedIds.map(id => NOWON_FACILITIES[id]?.courtCount || 0)) : 0;
+  nowonCourtEl.innerHTML = '<option value="">전체 코트</option>' + Array.from({ length: courtCount }, (_, i) => `<option value="${i + 1}">${i + 1}코트</option>`).join("");
+  if (Number(previousCourt) <= courtCount) nowonCourtEl.value = previousCourt;
   const selectedSlotMinutes = getSelectedSlotMinutes(data.getAll("venues"));
   for (const input of form.querySelectorAll("input[name='venues']")) {
     const slotMinutes = Number(input.dataset.slotMinutes);
-    input.disabled = !input.checked && (seasonal ? input.value !== "myeonmok" : Boolean(selectedSlotMinutes && slotMinutes !== selectedSlotMinutes));
+    input.disabled = !input.checked && ((nowon && !NOWON_FACILITIES[input.value]) || (!nowon && selectedIds.length > 0 && NOWON_FACILITIES[input.value]) || (seasonal ? input.value !== "myeonmok" : Boolean(selectedSlotMinutes && slotMinutes !== selectedSlotMinutes)));
   }
 
   if (selectedSlotMinutes === 120) {
@@ -773,11 +788,12 @@ function updateVenueSelection() {
 
   timeSlotsLegendEl.textContent = seasonal ? "회차별 실제 이용시간" : selectedSlotMinutes === 60 ? "1시간 단위 시간대" : "시간대";
   if (seasonal) venueSelectionHelpEl.textContent = "회차별 잔여 팀 수를 조회합니다. 실제 신청 가능 여부는 공식 사이트에서 확인";
-  renderTimeSlots(seasonal ? myeonmokSlots(data.get("date")) : selectedSlotMinutes === 60 ? oneHourTimeSlots : gangdongTimeSlots);
+  if (nowon) venueSelectionHelpEl.textContent = "노원 조회 준비 중으로 현재 알림 발송이 중지되어 있습니다. 예약은 공식 사이트에서 본인 계정으로 진행하세요.";
+  renderTimeSlots(nowon ? NOWON_TIMES : seasonal ? myeonmokSlots(data.get("date")) : selectedSlotMinutes === 60 ? oneHourTimeSlots : gangdongTimeSlots);
 }
 
 function renderVenueGroups() {
-  const regions = ["서울 강동구", "서울 송파구", "서울 중랑구", "경기 하남시"];
+  const regions = ["서울 강동구", "서울 송파구", "서울 중랑구", "서울 노원구", "경기 하남시"];
   venueGroupsEl.innerHTML = regions.map(region => {
     const venues = venueOptions.filter(venue => venue.region === region);
     if (!venues.length) return "";
@@ -792,7 +808,7 @@ function renderVenueGroups() {
           <span class="venue-name">${venue.name}</span>
         </label>`).join("")}</div>`;
     }).join("");
-    return `<section class="venue-group"><h3 class="venue-group-title">${region}</h3>${sections}</section>`;
+    return `<details class="venue-group" ${region === regions[0] ? "open" : ""}><summary class="venue-group-title">${region} · ${venues.length}개 선택 항목</summary>${sections}</details>`;
   }).join("");
 }
 
@@ -847,7 +863,7 @@ document.querySelector("#fakeAvailability").addEventListener("click", async () =
 });
 
 showWatchFormButton.addEventListener("click", () => {
-  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  goScreen("new");
   form.querySelector("input[name='venues']")?.focus({ preventScroll: true });
 });
 
@@ -873,15 +889,122 @@ async function bootApp() {
   if (!session.authenticated) return;
   trackVisit(trackedPageUser !== currentUser.id);
   trackedPageUser = currentUser.id;
+  goScreen("home");
   await loadOptions();
   updateVenueSelection();
   await loadWatches();
   await loadStatus();
+  await refreshDeliverySummary();
   await loadSeoulCatalog().catch((error) => {
     seoulCatalogStatusEl.textContent = error.message;
   });
 }
 
+let screen = "home";
+let formStep = 1;
+let historyPeriod = "all";
+let historyStatus = "all";
+let historyOffset = null;
+let historyGeneration = 0;
+function goScreen(next) {
+  screen = next;
+  document.querySelectorAll("[data-screen]").forEach(el => el.classList.toggle("hidden", el.dataset.screen !== next));
+  document.querySelectorAll(".bottom [data-go], .side [data-go]").forEach(el => {
+    const selected = el.dataset.go === next;
+    el.classList.toggle("on", selected);
+    if (selected) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
+  });
+  if (next === "new") { setFormStep(1); document.querySelector("#newConnectionNotice").classList.toggle("hidden", Boolean(currentUser?.telegramConnected)); }
+  if (next === "results") loadDeliveries();
+  window.scrollTo(0, 0);
+  const heading = document.querySelector(`[data-screen="${next}"] h1`);
+  if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+}
+function setFormStep(step) {
+  formStep = step;
+  document.querySelector("#venueStep").classList.toggle("hidden", step !== 1);
+  document.querySelector("#scheduleStep").classList.toggle("hidden", step !== 2);
+  document.querySelector("#nextFormStep").classList.toggle("hidden", step !== 1);
+  document.querySelector("#previousFormStep").classList.toggle("hidden", step !== 2);
+  form.querySelector("button[type=submit]").classList.toggle("hidden", step !== 2);
+  document.querySelector("#progressSecond").classList.toggle("filled", step === 2);
+  document.querySelector("#formTitle").textContent = step === 1 ? "테니스장을 선택해요." : "날짜와 시간을 정해요.";
+  document.querySelector("#formStepLabel").textContent = step === 1 ? "1 / 2 · 원하는 시설을 골라주세요." : "2 / 2 · 빈자리를 기다릴 조건을 확인하세요.";
+  updatePreview();
+}
+function updatePreview() {
+  const data = new FormData(form);
+  const names = data.getAll("venues").map(id => venueNames[id] || id).join(", ");
+  const times = data.get("anyTime") ? "시간대 상관없음" : data.getAll("times").join(", ");
+  document.querySelector("#formPreview").innerHTML = `<p class="kicker">선택한 조건</p><h3>${escapeHtml(names || "시설을 선택해 주세요")}</h3><p>${escapeHtml(data.get("date") || "날짜를 선택해 주세요")}<br>${escapeHtml(times || "시간을 선택해 주세요")}</p><div class="divider"></div><p class="muted">${currentUser?.telegramConnected ? "✓ 텔레그램 연결됨" : "텔레그램 연결 필요"}</p>`;
+}
+document.addEventListener("click", event => {
+  const watchTab = event.target.closest("[data-watch-filter]");
+  if (watchTab) { watchFilter = watchTab.dataset.watchFilter; renderWatches(displayedWatches); }
+  const target = event.target.closest("[data-go]");
+  if (target) goScreen(target.dataset.go);
+  const period = event.target.closest("[data-period]");
+  if (period) { historyPeriod = period.dataset.period; loadDeliveries(); }
+});
+document.querySelector("#nextFormStep").addEventListener("click", () => {
+  if (!new FormData(form).getAll("venues").length) return setStatus("테니스장을 선택해 주세요.");
+  setStatus(currentUser?.telegramConnected ? "" : "텔레그램 연결 후 알림을 등록할 수 있습니다.");
+  setFormStep(2); window.scrollTo(0, 0);
+});
+document.querySelector("#previousFormStep").addEventListener("click", () => setFormStep(1));
+form.addEventListener("change", updatePreview);
+document.querySelector("#deliveryFilter").addEventListener("change", event => { historyStatus = event.target.value; loadDeliveries(); });
+document.querySelector("#deliveryMore").addEventListener("click", () => loadDeliveries(true));
+document.querySelector("#deliveryRetry").addEventListener("click", () => loadDeliveries());
+function historyMarkup(rows) {
+  let day = "";
+  return rows.map(row => {
+    const date = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date(row.at));
+    const heading = date !== day ? `<h3 class="dayheading">${escapeHtml(formatDate(date))}</h3>` : "";
+    day = date;
+    const sent = row.status === "sent";
+    const names = [...new Set(row.items.map(i => i.venueName))].join(", ");
+    const bookings = row.items.filter(i => i.date).map(i => `${formatDate(i.date)} · ${i.time}${i.courtNo ? ` · ${i.courtNo}코트` : ""}`).join("\n");
+    return `${heading}<details class="history-item"><summary><div class="row"><span class="sent-at">${sent ? "발송" : "실패 시도"} ${escapeHtml(formatDateTime(row.at))}</span><span class="badge ${sent ? "" : "failed"}">${sent ? "✓ 발송 완료" : "! 발송 실패"}</span></div><h3>${escapeHtml(names || "테니스장 상세 기록 없음")}</h3><div class="booking"><span class="muted">예약 대상 · 코트 이용 날짜와 시간</span><strong style="white-space:pre-line">${escapeHtml(bookings || "상세 기록 없음")}</strong></div><p class="more">당시 ${sent ? "발송" : "발송 시도"} 내용 보기 ⌄</p></summary><div class="message-body">${escapeHtml(row.message || "상세 기록 없음")}</div><p class="muted">${sent ? "발송 당시 기록이며 현재 빈자리와 다를 수 있어요. 전송 성공은 읽음 확인이 아닙니다." : "전송에 실패하여 성공 건수에서 제외합니다."}</p>${row.attemptCount > 1 ? `<p class="muted">같은 발송 건 전송 시도 ${row.attemptCount}회 · 최근 시도 기록</p>${row.attempts.slice().reverse().map(a => `<p class="muted">${escapeHtml(formatDateTime(a.at))} · ${a.status === "sent" ? "발송 완료" : a.status === "failed" ? "발송 실패" : "결과 확인 필요"}</p>`).join("")}` : ""}</details>`;
+  }).join("");
+}
+function renderDeliverySummary(summary) {
+    document.querySelector("#deliveryTotal").textContent = summary.total;
+    document.querySelector("#deliveryToday").textContent = `${summary.today}건`;
+    document.querySelector("#deliveryLatest").textContent = formatDateTime(summary.latestAt);
+    document.querySelector("#todayDeliveryCopy").textContent = `오늘 텔레그램 알림 ${summary.today}건 발송`;
+    document.querySelector("#latestDeliveryCopy").textContent = `가장 최근 ${formatDateTime(summary.latestAt)} · 내역 확인`;
+}
+async function refreshDeliverySummary() {
+  try { const data = await request("/api/deliveries?summary=1"); renderDeliverySummary(data.summary); }
+  catch { document.querySelector("#todayDeliveryCopy").textContent = "오늘 발송 내역을 확인하지 못했습니다"; document.querySelector("#latestDeliveryCopy").textContent = "조회 결과에서 다시 시도하세요"; }
+}
+async function loadDeliveries(more = false) {
+  const generation = ++historyGeneration;
+  const rows = document.querySelector("#deliveryRows");
+  const button = document.querySelector("#deliveryMore");
+  const retry = document.querySelector("#deliveryRetry");
+  button.disabled = true; retry.classList.add("hidden");
+  if (!more) { historyOffset = null; button.classList.add("hidden"); rows.innerHTML = '<p class="history-empty">발송 내역을 불러오는 중이에요.</p>'; }
+  document.querySelectorAll("[data-period]").forEach(el => el.classList.toggle("selected", el.dataset.period === historyPeriod));
+  try {
+    const data = await request(`/api/deliveries?${new URLSearchParams({ period: historyPeriod, status: historyStatus, offset: more ? historyOffset : 0 })}`);
+    if (generation !== historyGeneration) return;
+    renderDeliverySummary(data.summary);
+    document.querySelector("#deliveryCount").textContent = `${data.total}건의 기록 · 발송 시각 최신순 · 한국 시간`;
+    const markup = historyMarkup(data.items);
+    if (more) rows.insertAdjacentHTML("beforeend", markup); else rows.innerHTML = markup || '<div class="history-empty">선택한 조건의 발송 내역이 없습니다.</div>';
+    historyOffset = data.nextOffset;
+    button.classList.toggle("hidden", historyOffset === null);
+    document.querySelector("#deliveryScope").textContent = `보관된 기록 기준 누적 · 기록 시작 ${formatDateTime(data.summary.startedAt)} · 상세 기록 시작 ${formatDateTime(data.summary.detailedStartedAt)}. 메시지 1개 = 1건 · 실패 제외.${data.summary.uncertain ? ` 결과 확인이 필요한 발송 ${data.summary.uncertain}건은 집계에서 제외했습니다.` : ""}`;
+  } catch {
+    if (generation !== historyGeneration) return;
+    if (!more) rows.innerHTML = '<p class="history-empty">발송 내역을 불러오지 못했습니다.</p>';
+    document.querySelector("#todayDeliveryCopy").textContent = "오늘 발송 내역을 확인하지 못했습니다";
+    document.querySelector("#latestDeliveryCopy").textContent = "조회 결과에서 다시 시도하세요";
+    retry.classList.remove("hidden");
+  } finally { if (generation === historyGeneration) button.disabled = false; }
+}
 await bootApp();
 setInterval(async () => {
   if (currentUser) {
@@ -889,6 +1012,7 @@ setInterval(async () => {
     if (session.authenticated) {
       await loadWatches();
       await loadStatus();
+      await refreshDeliverySummary();
     }
   }
 }, 30_000);
@@ -903,3 +1027,10 @@ function trackVisit(pageView = false) {
 }
 for (const type of ['pointerdown', 'keydown', 'scroll']) document.addEventListener(type, () => trackVisit(), { passive: true });
 document.addEventListener('visibilitychange', () => trackVisit());
+// Keep the navigation away from the software keyboard without changing form values.
+if (window.visualViewport) {
+  const updateKeyboard = () => document.body.classList.toggle('keyboard-open',
+    /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || '') && window.innerHeight - window.visualViewport.height > 140);
+  window.visualViewport.addEventListener('resize', updateKeyboard);
+  document.addEventListener('focusout', () => document.body.classList.remove('keyboard-open'));
+}

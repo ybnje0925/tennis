@@ -2,15 +2,12 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>테니스 잡아줘</title>
     <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <main class="app">
-      <section id="invitePanel" class="panel hidden">
-        <h1>🎾 테니스 잡아줘</h1>
-        <h2>Closed Beta</h2>
+  <link rel="stylesheet" href="/design-b.css" /></head>
+<body class="app-b"><main class="app">      <section id="invitePanel" class="entry-grid hidden"><div><p class="kicker">WELCOME TO YOUR NEXT COURT</p><h1 class="entry-title">빈 코트를<br>더 많은 사람에게.</h1><p class="sub">원하는 테니스장의 빈자리,<br>텔레그램으로 받아보세요.</p><ol class="steps"><li><b>초대코드로 시작</b></li><li><b>텔레그램 연결</b></li><li><b>조건 설정 후 빈자리 알림</b></li></ol></div><div class="card">
+        <h2>초대코드로 시작하기</h2><p class="muted">현재 초대코드로 이용할 수 있어요.</p>
         <form id="inviteForm">
           <label class="date-field">
             <span>초대코드</span>
@@ -34,35 +31,61 @@
           <button type="submit" class="primary">연결하기</button>
           <p id="deviceLinkClaimStatus" role="status"></p>
         </form>
-      </section>
+      </div></section>
 
-      <div id="appContent" class="hidden">
-        <header class="app-header">
-          <div class="brand-lockup">
-            <p class="eyebrow">나의 테니스 알림</p>
-            <h1>테니스 잡아줘 <span aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><circle cx="24" cy="24" r="22" fill="#c4d833"/><path d="M7 12c8 2 12 8 13 14 1 7-2 13-7 18M41 36c-8-2-12-8-13-14-1-7 2-13 7-18" fill="none" stroke="#fffef8" stroke-width="2.6" stroke-linecap="round"/></svg></span></h1>
-            <p class="brand-copy">빈 코트를 더 많은 사람에게</p>
+<div id="appContent" class="hidden"><header class="top"><div class="logo"><span class="ball" aria-hidden="true"></span>테니스 잡아줘</div><button id="topConnection" class="link-status" data-go="settings">연결 상태 확인</button></header><div class="shell"><aside class="side" aria-label="주요 메뉴"><button type="button" data-go="home" class=""><b aria-hidden="true">▦</b><span>내 알림</span></button><button type="button" data-go="results" class=""><b aria-hidden="true">≡</b><span>조회 결과</span></button><button type="button" data-go="new" class="new-center"><b aria-hidden="true">＋</b><span>새 알림</span></button><button type="button" data-go="status" class=""><b aria-hidden="true">◷</b><span>조회 현황</span></button><button type="button" data-go="settings" class=""><b aria-hidden="true">⚙</b><span>설정</span></button><button data-go="catalog">서울시 예약 탐색</button><p class="side-foot">빈 코트를 더 많은 사람에게</p></aside><div class="content">
+<section data-screen="home"><h1 id="emptyHomeTitle" class="hidden">내 알림</h1><div class="intro"><p class="kicker">MY TENNIS</p><h1>다음 테니스를 준비해요.</h1><p class="muted">원하는 시간, 빈자리가 나면 알려드릴게요.</p></div><section class="hero"><span class="hero-mark"></span><h2>빈자리 확인은 맡기고,<br>일상에 집중하세요.</h2><p id="heroCount">등록한 조건을 확인하고 있어요.</p><button id="showWatchForm" class="btn-lime" type="button">＋ 새 알림 만들기</button></section><div id="homeStatusLine" class="status-line"><span id="homeStatusBadge" class="badge">조회 상태 확인 중</span><span id="homeStatusTimes"></span></div><button id="historyJump" class="history-jump" data-go="results"><div><strong id="todayDeliveryCopy">오늘 텔레그램 알림 확인 중</strong><span id="latestDeliveryCopy">내역 확인</span></div><span>→</span></button><div class="grid-main"><section>        <section class="overview-grid hidden" aria-label="알림 현황">
+          <div class="overview-card">
+            <span class="overview-icon" aria-hidden="true">&#9834;</span>
+            <div><span>활성 알림</span><strong id="activeWatchCount">0</strong></div>
           </div>
-          <p class="header-message">오늘도<br />좋은 코트를 만나세요.</p>
-        </header>
-        <section class="hero-message" aria-label="서비스 안내">
-          <h2>내 알림 한눈에</h2>
-          <p>원하는 테니스 코트의 빈자리, 놓치지 마세요.</p>
+          <div class="overview-card">
+            <span class="overview-icon" aria-hidden="true">&#9638;</span>
+            <div><span>연결된 시설</span><strong id="connectedVenueCount">0</strong></div>
+          </div>
         </section>
 
-        <section id="telegramPanel" class="panel telegram-connect hidden">
-          <h2>텔레그램 알림 연결</h2>
-          <p>텔레그램 알림을 연결해주세요.</p>
-          <button id="connectTelegram" type="button">텔레그램 연결하기</button>
+        <section class="section-heading">
+          <div><p class="eyebrow">MY ALERTS</p><h2>등록한 알림</h2></div>
+          <button class="small" data-go="results">조회 결과 →</button><p id="watchSummary" class="hidden">알림을 불러오는 중이에요.</p>
+        </section>
+        <section>
+          <div id="watchFilters" class="chips" aria-label="알림 상태 필터"></div><div id="watches" class="watch-list"></div>
         </section>
 
-        <section id="devicePanel" class="panel device-panel">
-          <h2>다른 기기에서도 사용하기</h2>
-          <button id="createDeviceLink" type="button">기기 연결 코드 만들기</button>
-          <div id="deviceLinkResult" class="device-link-result hidden" aria-live="polite"></div>
-        </section>
+</section><aside id="homeSupport" class="desktop-support"><div class="card"><h3>조회 현황</h3><p id="homeMonitor" class="sub">조회 상태 확인 중</p><button class="wide" data-go="status">시설별 상태 보기 →</button></div><div class="notice">서울시 예약 서비스도 살펴보세요.<button data-go="catalog" class="wide">서울시 예약 탐색</button></div></aside></div></section>
+<section data-screen="results" class="hidden"><h1>조회 결과</h1><p class="sub">내게 발송된 텔레그램 알림을 확인하세요.</p><div class="grid-main"><section><div class="history-summary"><p class="muted">텔레그램 누적 발송 성공</p><div class="total"><span id="deliveryTotal">—</span><small>건</small></div><div class="history-stats"><div><strong id="deliveryToday">—</strong><span>오늘 발송 성공</span></div><div><strong id="deliveryLatest">—</strong><span>최근 발송 시각</span></div></div></div><div class="history-filters"><div class="chips"><button data-period="all" class="chip selected">전체 기간</button><button data-period="today" class="chip">오늘</button></div><select id="deliveryFilter" aria-label="발송 결과 필터"><option value="all">전체 결과</option><option value="sent">발송 완료</option><option value="failed">발송 실패</option></select></div><p id="deliveryCount" class="muted"></p><div id="deliveryRows" aria-live="polite"></div><button id="deliveryMore" class="wide hidden">더 보기</button><button id="deliveryRetry" class="wide hidden">다시 불러오기</button><p id="deliveryScope" class="entry-note"></p></section><aside class="desktop-support"><div class="card"><h3>알림 내역을 보는 방법</h3><div class="divider"></div><p class="muted"><b>발송 시각</b><br>텔레그램으로 메시지를 보낸 시간<br><br><b>예약 대상</b><br>코트 이용 날짜와 시간<br><br><b>발송 완료</b><br>전송 성공 기준이며 읽음 확인은 아니에요.</p></div><div class="notice">당시 빈자리 기록이에요.<br>현재 예약 가능 여부는 공식 사이트에서 확인해 주세요.</div><button data-go="status" class="wide">시설별 조회 상태 보기 →</button></aside></div></section><section data-screen="new" class="hidden"><div id="newConnectionNotice" class="notice hidden">먼저 텔레그램을 연결해 주세요.<button data-go="settings" class="wide">연결하러 가기</button></div><div class="form-layout">        <form id="watchForm" class="panel watch-form-panel">
+        <p class="eyebrow">NEW ALERT</p><h1 id="formTitle">테니스장을 선택해요.</h1><p id="formStepLabel" class="sub">1 / 2 · 원하는 시설을 골라주세요.</p><div class="progress"><span class="filled"></span><span id="progressSecond"></span></div><div id="venueStep">
+        <fieldset>
+          <legend>테니스장</legend>
+          <div id="venueGroups" class="venue-groups"></div>
+          <p id="venueSelectionHelp" class="venue-help"></p>
+        </fieldset>
 
-        <section class="monitoring-card" aria-live="polite">
+        </div><div id="scheduleStep" class="hidden"><label class="date-field">
+          <span>이용 날짜</span>
+          <input type="date" name="date" required />
+        </label>
+
+        <fieldset id="nowonFields" class="hidden">
+          <legend>노원 코트와 이용시간</legend>
+          <label class="nowon-field"><span>코트</span><select name="nowonCourt" id="nowonCourt"><option value="">전체 코트</option></select></label>
+          <label class="nowon-field"><span>이용시간</span><select name="nowonDuration"><option value="60">1시간</option><option value="120">연속 2시간</option></select></label>
+          <p class="venue-help">희망 시간대를 모두 선택하세요. 연속 2시간은 선택 시간 안에서 같은 코트의 인접한 두 시간이 모두 비어 있어야 합니다. 예약 자격은 공식 사이트에서 본인 계정으로 확인하세요.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend id="timeSlotsLegend">시간대</legend>
+          <label><input type="checkbox" name="anyTime" id="anyTime" /> 시간대 상관없음 · 모든 운영 시간 알림</label>
+          <div id="timeSlots" class="slot-grid"></div>
+        </fieldset>
+
+</div><div class="action-row"><button type="button" data-go="home">취소</button><button id="nextFormStep" type="button" class="primary">다음 · 날짜와 시간</button><button type="submit" class="primary hidden">빈자리 알림 받기</button></div><button id="previousFormStep" type="button" class="wide hidden">이전 · 시설 선택</button>
+        <p id="status" role="status"></p>
+        </form>
+
+<aside class="desktop-support"><div id="formPreview" class="form-preview"></div></aside></div></section>
+<section data-screen="status" class="hidden"><h1>시설 조회 현황</h1><p class="sub">조회 실패와 빈자리 없음은 다른 상태예요.</p>        <section class="monitoring-card" aria-live="polite">
           <div class="monitoring-state">
             <span class="status-dot" aria-hidden="true"></span>
             <div>
@@ -76,25 +99,30 @@
           </div>
         </section>
 
-        <section class="overview-grid" aria-label="알림 현황">
-          <div class="overview-card">
-            <span class="overview-icon" aria-hidden="true">&#9834;</span>
-            <div><span>활성 알림</span><strong id="activeWatchCount">0</strong></div>
-          </div>
-          <div class="overview-card">
-            <span class="overview-icon" aria-hidden="true">&#9638;</span>
-            <div><span>연결된 시설</span><strong id="connectedVenueCount">0</strong></div>
+        <section class="provider-status-section">
+          <div class="section-heading compact"><div><p class="eyebrow">CHECK STATUS</p><h2>시설 조회 상태</h2></div></div>
+          <div class="provider-status-grid">
+            <div><span>강일</span><strong id="gangilStatus">대기 중</strong><a id="gangilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>명일</span><strong id="myeongilStatus">대기 중</strong><a id="myeongilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>올림픽</span><strong id="olympicStatus">대기 중</strong><a id="olympicLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>송파</span><strong id="songpaStatus">대기 중</strong><a id="songpaLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>중랑 · 면목</span><strong id="jungnangStatus">대기 중</strong><a id="jungnangLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>노원</span><strong id="nowonStatus">대기 중</strong><a id="nowonLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
+            <div><span>하남</span><strong id="hanamStatus">대기 중</strong><a id="hanamLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
           </div>
         </section>
 
-        <button id="showWatchForm" class="new-watch-button" type="button"><span aria-hidden="true">+</span> 새 알림 만들기 <small>원하는 날짜와 시간, 시설을 선택하세요.</small></button>
-
-        <section class="section-heading">
-          <div><p class="eyebrow">MY ALERTS</p><h2>등록한 알림</h2></div>
-          <p id="watchSummary">알림을 불러오는 중이에요.</p>
-        </section>
         <section>
-          <div id="watches" class="watch-list"></div>
+          <div class="section-heading compact"><div><p class="eyebrow">ACTIVITY</p><h2>조회 로그</h2></div></div>
+          <div id="logs" class="logs"></div>
+          <p id="buildInfo" class="build-info"></p>
+        </section>
+
+</section>
+<section id="testTools" class="test-tools hidden"><h2>테스트</h2><button id="fakeAvailability" type="button">가상 빈자리 발생</button></section><section data-screen="settings" class="hidden narrow"><h1>알림 연결과 설정</h1>        <section id="telegramPanel" class="panel telegram-connect hidden">
+          <h2>텔레그램 알림 연결</h2>
+          <p>텔레그램 알림을 연결해주세요.</p>
+          <button id="connectTelegram" type="button">텔레그램 연결하기</button>
         </section>
 
         <section id="telegramConnectedPanel" class="telegram-status hidden" aria-live="polite">
@@ -106,30 +134,14 @@
           <button id="refreshTelegramStatus" type="button">연결 상태 확인</button>
         </section>
 
-        <form id="watchForm" class="panel watch-form-panel">
-        <div class="form-heading"><div><p class="eyebrow">NEW ALERT</p><h2>새 알림 만들기</h2></div><p>빈자리를 찾을 조건을 선택하세요.</p></div>
-        <fieldset>
-          <legend>테니스장</legend>
-          <div id="venueGroups" class="venue-groups"></div>
-          <p id="venueSelectionHelp" class="venue-help"></p>
-        </fieldset>
+        <section id="devicePanel" class="panel device-panel">
+          <h2>다른 기기에서도 사용하기</h2>
+          <button id="createDeviceLink" type="button">기기 연결 코드 만들기</button>
+          <div id="deviceLinkResult" class="device-link-result hidden" aria-live="polite"></div>
+        </section>
 
-        <label class="date-field">
-          <span>날짜</span>
-          <input type="date" name="date" required />
-        </label>
-
-        <fieldset>
-          <legend id="timeSlotsLegend">시간대</legend>
-          <label><input type="checkbox" name="anyTime" id="anyTime" /> 시간대 상관없음 · 모든 운영 시간 알림</label>
-          <div id="timeSlots" class="slot-grid"></div>
-        </fieldset>
-
-        <button type="submit" class="primary">빈자리 알림 받기</button>
-        <p id="status" role="status"></p>
-        </form>
-
-        <details id="seoulCatalogPanel" class="collapsible-section">
+<button class="list-link" data-go="catalog">서울시 예약 탐색 →</button><button class="list-link" data-go="status">시설 조회 현황 →</button></section>
+<section data-screen="catalog" class="hidden narrow"><h1>서울시 예약 탐색</h1>        <details id="seoulCatalogPanel" class="collapsible-section">
           <summary class="section-heading compact"><span><span class="eyebrow">EXPLORE</span><strong>서울시 공공서비스예약</strong></span><span class="section-chevron" aria-hidden="true"></span></summary>
           <div class="panel seoul-catalog">
             <p class="catalog-note">서울시 API의 접수 상태이며, 특정 날짜·시간의 실제 빈자리 여부와는 다를 수 있습니다.</p>
@@ -161,31 +173,4 @@
           </div>
         </details>
 
-        <section class="provider-status-section">
-          <div class="section-heading compact"><div><p class="eyebrow">CHECK STATUS</p><h2>시설 조회 상태</h2></div></div>
-          <div class="provider-status-grid">
-            <div><span>강일</span><strong id="gangilStatus">대기 중</strong><a id="gangilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-            <div><span>명일</span><strong id="myeongilStatus">대기 중</strong><a id="myeongilLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-            <div><span>올림픽</span><strong id="olympicStatus">대기 중</strong><a id="olympicLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-            <div><span>송파</span><strong id="songpaStatus">대기 중</strong><a id="songpaLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-            <div><span>중랑 · 면목</span><strong id="jungnangStatus">대기 중</strong><a id="jungnangLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-            <div><span>하남</span><strong id="hanamStatus">대기 중</strong><a id="hanamLink" class="reservation-link" target="_blank" rel="noopener noreferrer">예약 사이트</a></div>
-          </div>
-        </section>
-
-        <section>
-          <div class="section-heading compact"><div><p class="eyebrow">ACTIVITY</p><h2>조회 로그</h2></div></div>
-          <div id="logs" class="logs"></div>
-          <p id="buildInfo" class="build-info"></p>
-        </section>
-
-        <section id="testTools" class="test-tools hidden">
-          <h2>테스트</h2>
-          <button id="fakeAvailability" type="button">가상 빈자리 발생</button>
-        </section>
-      </div>
-      <p class="build-info">클로즈 베타 개선을 위해 로그인 후 방문·알림 설정·발송 이력을 기록하며 관리자만 확인할 수 있습니다.</p>
-    </main>
-    <script src="/app.js" type="module"></script>
-  </body>
-</html>
+</section><p class="entry-note">베타 개선을 위해 방문·알림 설정·발송 이력을 기록합니다.</p></div></div><nav class="bottom" aria-label="주요 메뉴"><button type="button" data-go="home" class=""><b aria-hidden="true">▦</b><span>내 알림</span></button><button type="button" data-go="results" class=""><b aria-hidden="true">≡</b><span>조회 결과</span></button><button type="button" data-go="new" class="new-center"><b aria-hidden="true">＋</b><span>새 알림</span></button><button type="button" data-go="status" class=""><b aria-hidden="true">◷</b><span>조회 현황</span></button><button type="button" data-go="settings" class=""><b aria-hidden="true">⚙</b><span>설정</span></button></nav></div></main><script src="/app.js" type="module"></script></body></html>

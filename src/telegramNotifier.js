@@ -44,24 +44,15 @@ export async function sendTelegramMessage(message, options = {}) {
   }
 
   let response;
-  let lastError;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      break;
-    } catch (error) {
-      lastError = error;
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
-    }
-  }
-
-  if (!response) {
-    const cause = lastError?.cause?.code ? ` (${lastError.cause.code})` : "";
-    throw new Error(`Telegram request failed${cause}: ${lastError?.message ?? "unknown error"}`);
+  try {
+    response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    });
+  } catch {
+    // A lost response may follow an accepted message. Telegram has no idempotency key.
+    const error = new Error("Telegram response unavailable; delivery outcome unknown");
+    error.deliveryUncertain = true;
+    throw error;
   }
 
   if (!response.ok) {
@@ -69,7 +60,11 @@ export async function sendTelegramMessage(message, options = {}) {
     throw new Error(`Telegram send failed: ${response.status}${detail ? ` ${detail}` : ""}`);
   }
 
-  return response.json();
+  let result;
+  try { result = await response.json(); }
+  catch { const error = new Error("Telegram response unreadable; delivery outcome unknown"); error.deliveryUncertain = true; throw error; }
+  if (result.ok !== true) throw new Error("Telegram API rejected the message");
+  return result;
 }
 
 async function readTelegramError(response) {
@@ -105,6 +100,7 @@ export function buildTelegramConnectionTestMessage() {
 }
 
 export function buildAvailabilityMessage(item) {
+  if (item.provider === "nowon") return buildNowonMessage([item]);
   if (item.provider === "jungnang") return buildMyeonmokMessage([item]);
   if (item.provider === "hanam") return buildHanamAvailabilityMessage(item);
   if (item.provider === "olympic") return buildOlympicAvailabilityMessage(item);
@@ -149,6 +145,7 @@ export function buildAggregatedAvailabilityMessage(items) {
   if (!Array.isArray(items) || items.length === 0) return "";
   if (items.length === 1) return buildAvailabilityMessage(items[0]);
 
+  if (items[0].provider === "nowon") return buildNowonMessage(items);
   if (items[0].provider === "jungnang") return buildMyeonmokMessage(items);
   const first = items[0];
   const venue = VENUES[first.venue];
@@ -206,4 +203,13 @@ export function buildMyeonmokMessage(items) {
       item.warning || null]),
     "", "실제 신청 가능 여부는 공식 사이트에서 확인",
     VENUES.myeonmok.publicUrl].filter(Boolean).join("\n");
+}
+
+export function buildNowonMessage(items) {
+  const first = items[0];
+  return ["🎾 노원 " + (first.venueName || VENUES[first.venue]?.name) + " 빈자리",
+    "📅 " + formatKoreanDateWithWeekday(first.date),
+    ...items.map(item => "🎾 " + item.courtNo + "코트 · 🕒 " + item.startTime + "~" + item.endTime + " · " + (item.durationMinutes === 120 ? "연속 2시간" : "1시간")),
+    "🔗 공식 예약 페이지", VENUES[first.venue]?.publicUrl,
+    "운영자 계정 조회 결과입니다. 관내·관외 예약 자격을 확인하고 본인 계정으로 직접 예약하세요."].filter(Boolean).join("\n");
 }
