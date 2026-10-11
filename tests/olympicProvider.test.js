@@ -210,3 +210,32 @@ describe("Olympic court parsing", () => {
     expect(matches.map((item) => item.courtNo)).toEqual(["3", "7"]);
   });
 });
+
+it("ignores a calendar ancestor containing multiple dates",()=>{
+  const period=parseOlympicCalendarPeriodText("2026.10.11 ~ 2026.10.23");
+  const cells=buildOlympicCalendarCells([
+    {text:"날짜별 예약 12 가능 - 3건 진행 - 0건 마감 - 15건 13 가능 - 0건 진행 - 0건 마감 - 18건"},
+    {text:"12 가능 - 3건 진행 - 0건 마감 - 15건"},
+    {text:"13 가능 - 0건 진행 - 0건 마감 - 18건"}
+  ],{period});
+  expect(cells.map(c=>c.date)).toEqual(["2026-10-12","2026-10-13"]);
+});
+it("reads enabled modern court hotspots and ignores hidden or disabled buttons",()=>{
+  const courts=parseOlympicCourtElements([
+    {isHotspot:true,visible:true,ariaLabel:"5번 구역",className:"place-hotspot"},
+    {isHotspot:true,visible:true,ariaLabel:"6번 코트 선택한 시간에는 개방하지 않는 코트입니다.",className:"place-hotspot is-disabled",disabled:true},
+    {isHotspot:true,visible:false,ariaLabel:"7번 구역",className:"place-hotspot"}
+  ],base);
+  expect(courts.map(c=>c.courtNo)).toEqual(["5"]);
+});
+it("does not treat policy numbers, dates or time rows as available courts",()=>{
+  expect(parseOlympicCourtElements([
+    {text:"1인 1코트당 최대 2시간 또는 1인 2코트 각 1시간씩만 예약이 가능합니다."},
+    {text:"10월 12일(08:00~09:00) 신청가능"},
+    {text:"20분 후 결제바구니에서 자동 삭제됩니다.",className:"online_area"}
+  ],base)).toEqual([]);
+});
+it("matches unrestricted times even if an old saved explicit time list is incomplete",()=>{
+  expect(filterOlympicSlotsByWatch([slot()],{date:base.date,anyTime:true,times:[]})).toHaveLength(1);
+  expect(filterOlympicSlotsByWatch([slot()],{date:base.date,anyTime:false,times:[]})).toHaveLength(0);
+});

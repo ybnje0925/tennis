@@ -236,9 +236,9 @@ function isOlympicReservationUrl(page) {
 async function hasOlympicCalendarContent(page) {
   try {
     return await page.evaluate(() => {
-      const text = document.body.innerText || "";
+      const text = document.body?.innerText || "";
       const hasCounts = ["가능", "진행", "마감"].every((label) => new RegExp(`${label}\\s*(?:[-–—:]\\s*)?\\d+\\s*건`).test(text));
-      return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCounts;
+      return hasCounts;
     });
   } catch {
     return false;
@@ -246,6 +246,7 @@ async function hasOlympicCalendarContent(page) {
 }
 
 export async function selectCourtType(page, courtType, options = {}) {
+  if (courtType === "all") return;
   const label = COURT_TYPES[courtType];
   if (!label) throw new Error(`Unknown Olympic court type: ${courtType}`);
 
@@ -317,11 +318,11 @@ export async function selectDate(page, date, options = {}) {
 
     const root = Array.from(document.querySelectorAll(".online_area .app_type .cate_con, .online_area, .app_type, section, article, main, body"))
       .find((element) => hasCalendarStatus(normalize(element.innerText || element.textContent || ""))) || document.body;
-    const period = parsePeriod(document.body.innerText || "");
+    const period = parsePeriod(document.body?.innerText || "");
     let cursor = period?.startDate || isoDate.slice(0, 8) + "01";
     const candidates = Array.from(root.querySelectorAll("li, td")).filter((element) => {
       const text = normalize(element.innerText || element.textContent || "");
-      return hasCalendarStatus(text);
+      return hasCalendarStatus(text) && !Array.from(element.querySelectorAll("li, td")).some(child => hasCalendarStatus(normalize(child.innerText || child.textContent || "")));
     });
 
     let target = null;
@@ -339,14 +340,18 @@ export async function selectDate(page, date, options = {}) {
 
     if (!target) return false;
 
-    const possibleButton = target.querySelector("a, button, input");
-    (possibleButton || target).click();
+    const possibleButton = Array.from(target.querySelectorAll("a, button, input")).find(control => /^가능\s*(?:[-–—:]\s*)?\d+\s*건/.test(normalize(control.innerText || control.textContent || "")));
+    if (!possibleButton) return false;
+    possibleButton.click();
     return true;
   }, { isoDate: date }));
 
   if (!clicked) throw new Error(`Olympic date selector not found for ${date}`);
   await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
-  await page.waitForFunction(() => /[0-2]?\d\s*시|[0-2]?\d:00\s*~/.test(document.body.innerText || ""), null, { timeout: 10_000 }).catch(() => {});
+  await page.waitForFunction(({ month, day }) => {
+    const text = document.body?.innerText || "";
+    return new RegExp(month + "월\\s*" + day + "일\\s*\\(\\s*[0-2]?\\d:00\\s*~").test(text);
+  }, { month: Number(date.slice(5, 7)), day: Number(date.slice(8, 10)) }, { timeout: 15_000 });
 }
 
 export async function parseOlympicDateStatuses(page, fallbackYear = new Date().getFullYear()) {
@@ -363,13 +368,13 @@ export async function readOlympicCalendar(page, fallbackYear = new Date().getFul
       .find((element) => hasCalendarStatus(normalize(element.innerText || element.textContent || ""))) || document.body;
     const rawCells = Array.from(root.querySelectorAll("li, td")).filter((element) => {
       const text = normalize(element.innerText || element.textContent || "");
-      return hasCalendarStatus(text);
+      return hasCalendarStatus(text) && !Array.from(element.querySelectorAll("li, td")).some(child => hasCalendarStatus(normalize(child.innerText || child.textContent || "")));
     }).map((element) => ({
       text: normalize(element.innerText || element.textContent || "")
     }));
 
     return {
-      pageText: document.body.innerText || "",
+      pageText: document.body?.innerText || "",
       rawCells
     };
   });
@@ -392,9 +397,9 @@ export function isOlympicProtectionPage({ html = "", body = "" } = {}) {
 export async function waitForOlympicCalendar(page) {
   try {
     await page.waitForFunction(() => {
-      const text = document.body.innerText || "";
+      const text = document.body?.innerText || "";
       const hasCalendarStatus = ["가능", "진행", "마감"].every((label) => new RegExp(label + "\\s*(?:[-–—:]\\s*)?\\d+\\s*건").test(text));
-      return /20\d{2}\.\d{1,2}\.\d{1,2}\s*~/.test(text) || hasCalendarStatus;
+      return hasCalendarStatus;
     }, null, { timeout: 30_000 });
   } catch (error) {
     const html = await page.content().catch(() => "");
@@ -432,7 +437,12 @@ export async function selectTimeSlot(page, slot) {
       .sort((a, b) => a.text.length - b.text.length);
     const target = candidates[0]?.element;
     if (!target) return false;
-    (target.querySelector("button, a, input") || target).click();
+    const control = target.querySelector("input[type='checkbox'], input[type='radio'], button, a") || target;
+    const list = target.closest("ul");
+    for (const previous of list?.querySelectorAll("input:checked") || []) {
+      if (previous !== control) previous.click();
+    }
+    if (!("checked" in control) || !control.checked) control.click();
     return true;
   }, slot);
 
@@ -450,13 +460,18 @@ export async function selectTimeSlot(page, slot) {
 
 export async function parseAvailableOlympicCourts(page, base) {
   const elements = await page.evaluate(() => {
-    const nodes = Array.from(document.querySelectorAll("button, a, label, input, li, span, div"));
+    const map = document.querySelector(".place-selector[data-tab-mode='DATE']");
+    const nodes = map
+      ? Array.from(map.querySelectorAll(".place-hotspot")).filter(element => element.getClientRects().length > 0)
+      : Array.from(document.querySelectorAll("button, a, label, input, li, span, div")).filter(element => element.getClientRects().length > 0);
     return nodes.map((element) => ({
       text: (element.innerText || element.textContent || element.value || "").replace(/\s+/g, " ").trim(),
       className: String(element.className || ""),
       disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
       title: element.getAttribute("title") || "",
       ariaLabel: element.getAttribute("aria-label") || "",
+      isHotspot: element.classList.contains("place-hotspot"),
+      visible: element.getClientRects().length > 0,
       dataState: element.getAttribute("data-state") || element.getAttribute("data-status") || "",
       tagName: element.tagName
     }));
@@ -483,7 +498,7 @@ export function parseOlympicTimeSlotElements(elements, base) {
         venue: "olympic",
         venueName: VENUES.olympic.name,
         courtType: base.courtType,
-        courtTypeName: COURT_TYPES[base.courtType],
+        courtTypeName: COURT_TYPES[base.courtType] || "전체 코트",
         date: base.date,
         startTime,
         endTime,
@@ -502,11 +517,13 @@ export function parseOlympicCourtElements(elements, base) {
   for (const element of orderedElements) {
     const text = `${element.text || ""} ${element.title || ""} ${element.ariaLabel || ""}`.replace(/\s+/g, " ").trim();
     if ((text.match(/(?:[1-9]|1\d|2\d)\s*번?\s*코트/g) || []).length > 1) continue;
-    const court = text.match(/(?:^|\D)([1-9]|1\d|2\d)(?:번\s*코트|코트|번)?(?:\D|$)/)?.[1];
+    const court = element.isHotspot
+      ? text.match(/(?:^|\s)([1-9]|1\d|2\d)번\s*(?:구역|코트)/)?.[1]
+      : text.match(/(?:^|\D)([1-9]|1\d|2\d)\s*번?\s*코트(?:\D|$)/)?.[1];
     if (!court) continue;
     const statusText = `${text} ${element.className || ""} ${element.dataState || ""}`;
     const unavailable = element.disabled || /신청마감|예약마감|마감|선택불가|사용불가|disabled|disable|closed|soldout|impossible|off/.test(statusText);
-    const available = /신청가능|예약가능|가능|선택가능|available|on|active/.test(statusText) && !unavailable;
+    const available = element.visible !== false && (element.isHotspot || /신청가능|예약가능|선택가능/.test(text) || /(?:^|\s)(?:available|on|active)(?:\s|$)/.test(element.className || "")) && !unavailable;
     if (!available) continue;
 
     byCourt.set(court, {
@@ -514,7 +531,7 @@ export function parseOlympicCourtElements(elements, base) {
       venue: "olympic",
       venueName: VENUES.olympic.name,
       courtType: base.courtType,
-      courtTypeName: COURT_TYPES[base.courtType],
+      courtTypeName: COURT_TYPES[base.courtType] || "전체 코트",
       courtNo: court,
       date: base.date,
       startTime: base.startTime,
@@ -577,7 +594,7 @@ export function filterOlympicSlotsByWatch(slots, watch) {
 
   return candidates.filter((slot) => (
     slot.date === watch.date &&
-    selectedByWatchTimes(slot, wantedTimes)
+    (watch.anyTime === true || selectedByWatchTimes(slot, wantedTimes))
   ));
 }
 
@@ -598,10 +615,11 @@ export async function fetchOlympicAvailabilityForDate(page, { date, courtType },
   await selectDate(page, date, { timer });
 
   const timeSlots = (await maybeStep(timer, `예약 데이터 파싱 ${date}`, () => parseOlympicTimeSlots(page, date, courtType))).filter((slot) => slot.available);
+  if (!timeSlots.length) throw diagnosticError({provider:"olympic",venueId:"olympic",targetDate:date,type:"TARGET_DATE_NOT_PARSED",stage:"CALENDAR",retryable:true,message:"올림픽 달력에는 빈자리가 있지만 대상 날짜의 신청 가능한 시간표를 읽지 못했습니다."});
   const slots = [];
   for (const timeSlot of timeSlots) {
     const selected = await selectTimeSlot(page, timeSlot);
-    if (!selected) continue;
+    if (!selected) throw diagnosticError({provider:"olympic",venueId:"olympic",targetDate:date,type:"TARGET_DATE_NOT_PARSED",stage:"CALENDAR",retryable:true,message:"올림픽 신청 가능한 시간의 선택 결과를 확인하지 못했습니다."});
     const courts = await maybeStep(timer, `코트 파싱 ${date} ${timeSlot.time}`, () => parseAvailableOlympicCourts(page, timeSlot));
     slots.push(...courts);
   }
@@ -626,10 +644,13 @@ export async function checkOlympicByWatches(watches) {
   try {
     const page = await getAuthenticatedOlympicPage({ timer });
 
+    const separateCourtTypes = await page.evaluate(() => Array.from(document.querySelectorAll("button, a, label, input[type='radio']"))
+      .some(element => /^(?:실내|실외)(?:코트)?$/.test((element.innerText || element.value || "").replace(/\s+/g, "").trim()))) === true;
+    const lookupGroups = separateCourtTypes ? [...groups.values()] : [...new Set(olympicWatches.map(w => w.date))].map(date => ({date,courtType:"all"}));
     const allSlots = [];
     const failedDateLookups = new Set();
     const lookupErrors = [];
-    for (const group of groups.values()) {
+    for (const group of lookupGroups) {
       if (failedDateLookups.has(group.date)) continue;
       try {
         const result = await fetchOlympicAvailabilityForDate(page, group, { timer });
@@ -682,7 +703,7 @@ export async function inspectOlympicReservationPage(page) {
   const snapshot = await page.evaluate(() => ({
     url: location.href,
     title: document.title,
-    text: (document.body.innerText || "").slice(0, 4000),
+    text: (document.body?.innerText || "").slice(0, 4000),
     controls: Array.from(document.querySelectorAll("button, a, input, select, label")).slice(0, 160).map((element) => ({
       tag: element.tagName,
       type: element.type || "",
@@ -758,6 +779,7 @@ export function buildOlympicCalendarCells(rawCells, options = {}) {
 
   for (const raw of rawCells) {
     const rawText = normalizeText(raw.text);
+    if ((rawText.match(/가능\s*(?:[-–—:]\s*)?\d+\s*건/g) || []).length !== 1) continue;
     const day = extractOlympicCellDay(rawText);
     if (!day) continue;
 
