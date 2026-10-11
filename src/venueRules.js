@@ -21,6 +21,7 @@ export function validateVenueSelection(venueIds) {
   if (venueIds.includes("myeonmok")) return venueIds.length === 1
     ? { ok: true, slotMinutes: null }
     : { ok: false, message: "면목구립테니스장은 계절별 회차 시설이므로 별도로 등록하세요." };
+  if (venueIds.some(id => VENUES[id]?.provider === "nowon") && venueIds.some(id => VENUES[id]?.provider !== "nowon")) return { ok: false, message: "노원 시설은 별도 알림으로 등록하세요." };
   const groups = getSelectedSlotMinuteGroups(venueIds);
   if (groups.length > 1) {
     return {
@@ -33,6 +34,7 @@ export function validateVenueSelection(venueIds) {
 }
 
 export function disabledVenueIdsForSelection(selectedVenueIds) {
+  if (selectedVenueIds.some(id => VENUES[id]?.provider === "nowon")) return Object.values(VENUES).filter(venue => venue.provider !== "nowon").map(venue => venue.id);
   if (selectedVenueIds.includes("myeonmok")) return Object.keys(VENUES).filter(id => id !== "myeonmok");
   const groups = getSelectedSlotMinuteGroups(selectedVenueIds);
   if (groups.length !== 1) return [];

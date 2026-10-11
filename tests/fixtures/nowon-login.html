@@ -1,0 +1,37 @@
+<!-- Actual anonymous login form, 2026-10-02. Values removed. -->
+<form id="frm" name="frm" method="post">
+					<fieldset>
+						<legend>회원 로그인</legend>
+						<div class="login_wrap">
+							<div class="label">※ 비밀번호 입력 오류가 누적 5회 발생하면 로그인 기능이 잠깁니다.</div>
+							<div class="label mt10">※ 비밀번호 오류 시, 사전에 비밀번호 찾기 기능을 이용해 주시기 바랍니다.</div>
+							<div class="input_area mt20">
+								<input type="text" name="memberId" id="memberId" placeholder="아이디를 입력해주세요." required>
+								<label for="memberId" class="blind">아이디</label>
+								<i class="ico_id">아이디</i>
+							</div>
+							<div class="input_area">
+								<input type="password" name="memberPassword" id="memberPassword" placeholder="비밀번호를 입력해주세요." required>
+								<label for="memberPassword" class="blind">비밀번호</label>
+								<i class="ico_pw">비밀번호</i>
+							</div>
+							<div class="login_sub">
+								<div class="chk_area">
+									<input type="checkbox" name="save_id" id="save_id" checked>
+									<label for="save_id" class="chk">
+										<i class="ico_chk"></i>
+										아이디 저장
+									</label>
+								</div>
+								<div class="link_area">
+									<a href="/member/find_id" class="btn">아이디 찾기</a>
+									<a href="/member/find_pw" class="btn">비밀번호 찾기</a>
+								</div>
+							</div>
+							<div class="btn_area">
+								<button type="submit" class="btn">LOGIN</button>
+								<a href="/member/join01" class="btn btn_join">회원가입</a>
+							</div>
+						</div>
+					</fieldset>
+				</form>

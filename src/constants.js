@@ -1,6 +1,14 @@
 import { config } from "./config.js";
 
+import { NOWON_FACILITIES } from "../public/nowonRules.js";
+
 export const VENUES = {
+  ...Object.fromEntries(Object.entries(NOWON_FACILITIES).map(([id, facility]) => [id, {
+    id, name: facility.name, region: "서울 노원구", provider: "nowon", slotMinutes: 60,
+    courts: Array.from({ length: facility.courtCount }, (_, i) => String(i + 1)),
+    url: `https://reservation.nowonsc.kr/sports/courtReserve_date?cate1=1&cate2=${facility.cate2}`,
+    publicUrl: `https://reservation.nowonsc.kr/sports/courtReserve_date?cate1=1&cate2=${facility.cate2}`
+  }])),
   myeonmok: {
     id: "myeonmok", name: "면목구립테니스장", region: "서울 중랑구",
     url: "https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php",
@@ -135,6 +143,9 @@ export const OLYMPIC_LOGIN_URL = "https://www.ksponco.or.kr/online/tennis/login.
 export const OLYMPIC_RESERVATION_URL = "https://www.ksponco.or.kr/online/tennis/resrvtn_aplictn.do";
 
 export const PROVIDERS = {
+  nowon: { id: "nowon", name: "노원구 테니스장", pollingMinutes: 5, slotMinutes: 60,
+    publicUrl: "https://reservation.nowonsc.kr/sports/tennis_list", supportsCourtNumber: true,
+    supportsContinuousSlots: true, venues: Object.keys(NOWON_FACILITIES) },
   jungnang: {
     id: "jungnang", name: "서울 중랑구 · 면목구립테니스장",
     pollingMinutes: 5, publicUrl: "https://tennis.jungnangimc.or.kr/page/rent/s01.od.list.php",

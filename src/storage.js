@@ -1,5 +1,6 @@
 import { resolveWatchTimes } from "./watchTimes.js";
 import { disableExpiredWatches } from "./watchExpiry.js";
+import { validateNowonWatch } from "../public/nowonRules.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -100,10 +101,12 @@ function validateSeasonalWatch(input) {
 export async function addWatch(input) {
   input = { ...input, times: resolveWatchTimes(input) };
   validateSeasonalWatch(input);
+  validateNowonWatch(input);
   return updateState((state) => {
     const watch = {
       id: crypto.randomUUID(),
       userId: input.userId,
+      ...(input.provider === "nowon" ? { courts: (input.courts || []).map(String), durationMinutes: input.durationMinutes ?? 60 } : {}),
       provider: input.provider,
       venues: input.venues,
       venue: input.venue,
@@ -146,6 +149,12 @@ export async function updateWatch(id, patch, userId = null) {
         watch.times = patch.times;
       }
       watch.anyTime = candidate.anyTime === true;
+    }
+    if ((watch.venues || []).some(id => id.startsWith("nowon-")) && ["venues", "date", "times", "courts", "durationMinutes"].some(field => field in patch)) {
+      const candidate = { ...watch, ...patch };
+      if (candidate.venues?.some(id => !id.startsWith("nowon-")) || !candidate.venues?.length) throw new Error("다른 시설은 새 알림으로 등록하세요.");
+      validateNowonWatch(candidate);
+      for (const field of ["venues", "date", "times", "courts", "durationMinutes"]) watch[field] = candidate[field];
     }
     if (["venues", "date", "times"].some(field => field in patch) && ((watch.venues || []).includes("myeonmok") || (patch.venues || []).includes("myeonmok"))) {
       const candidate = { ...watch, ...patch };
@@ -451,6 +460,6 @@ function legacyLogId(line, index) {
 
 function isCompatibleLogDetail(line, detail) {
   if (!detail) return true;
-  const labels = { gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
+  const labels = { nowon: "노원", gangdong: "강동", songpa: "송파", olympic: "올림픽", hanam: "하남" };
   return (detail.errors || []).every((error) => !error?.provider || line.includes(labels[error.provider] || error.provider));
 }

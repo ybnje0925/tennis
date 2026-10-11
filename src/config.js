@@ -23,6 +23,8 @@ export const config = {
   gangdongUserPassword: process.env.GANGDONG_USER_PASSWORD || "",
   olympicUserId: process.env.OLYMPIC_USER_ID || "",
   olympicUserPassword: process.env.OLYMPIC_USER_PASSWORD || "",
+  nowonUsername: process.env.NOWON_USERNAME || "",
+  nowonPassword: process.env.NOWON_PASSWORD || "",
   songpaUserId: process.env.SONGPA_USER_ID || "",
   songpaUserPassword: process.env.SONGPA_USER_PASSWORD || "",
   seoulOpenApiKey: process.env.SEOUL_OPEN_API_KEY || "",

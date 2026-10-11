@@ -132,6 +132,12 @@ export function userErrorGuide(type, message = "") {
       action: "대부분 일시적인 연결 문제라 다음 조회 때 다시 시도됩니다."
     };
   }
+  if (type.startsWith("NOWON_")) {
+    const auth = ["NOWON_LOGIN_CONFIG_REQUIRED", "NOWON_CREDENTIALS_INVALID", "NOWON_ACCOUNT_LOCKED", "NOWON_ADDITIONAL_AUTH", "NOWON_AUTH_UNCONFIRMED"].includes(type);
+    return { category: type === "NOWON_LOGIN_CONFIG_REQUIRED" ? "로그인 설정 필요" : auth ? "인증 오류" : "조회 오류",
+      summary: type === "NOWON_STRUCTURE_UNVERIFIED" ? "노원 상세 시간표 구조가 미검증 상태여서 알림을 중단했습니다." : auth ? "노원 운영자 인증 설정 또는 공식 사이트 조치가 필요합니다." : "노원 상세 시간표 상태를 확인하지 못했습니다.",
+      action: auth ? "운영자가 서버 설정과 공식 계정을 확인한 뒤 인증을 재개해야 합니다." : "상세 시간표 구조와 상태를 검증해야 합니다. 기존 성공 결과는 유지합니다." };
+  }
   if (type === "LOGIN_OR_PROTECTION_PAGE") {
     return {
       category: "로그인/접근 보호 문제",

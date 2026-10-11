@@ -1,3 +1,4 @@
+import { checkNowonVenues, nowonVenueIdsFromWatches } from "./providers/nowonProvider.js";
 import { openGangdongSession, ensureLoggedIn, looksLikeProtectionOrLogin } from "./browserSession.js";
 import { PROVIDERS, VENUES } from "./constants.js";
 import { config } from "./config.js";
@@ -439,6 +440,7 @@ export async function checkAllVenues(options = {}) {
     ? safeProviderCheck(provider, fn)
     : Promise.resolve({});
   const providerChecks = [
+    checkRequested("nowon", () => checkNowonVenues(nowonVenueIdsFromWatches(watches), { venueDates })),
     checkRequested("jungnang", () => checkMyeonmokVenues(watches.length ? Array.from(watchedVenueIds) : [], { venueDates })),
     checkRequested("gangdong", () => checkGangdongVenues(Array.from(watchedVenueIds), { venueDates })),
     checkRequested("songpa", () => checkSongpaVenues(songpaVenueIdsFromWatches(watches), { venueDates })),
@@ -447,8 +449,10 @@ export async function checkAllVenues(options = {}) {
       ? checkRequested("olympic", () => checkOlympicByWatches(olympicWatches))
       : Promise.resolve([])
   ];
-  const [jungnang, gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);
+  const [nowon, jungnang, gangdong, songpa, hanam, olympicResult] = await Promise.all(providerChecks);
 
+  Object.assign(result, stripCheckMeta(nowon));
+  meta.errors.push(...getCheckErrors(nowon));
   Object.assign(result, stripCheckMeta(jungnang));
   meta.errors.push(...getCheckErrors(jungnang));
   Object.assign(result, stripCheckMeta(gangdong));

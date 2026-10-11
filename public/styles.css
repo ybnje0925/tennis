@@ -194,3 +194,6 @@ button.primary:hover { background: var(--court-dark); }
 .watch-actions { flex: 0 0 auto; margin-left: auto; }
 .watch-actions button { flex-shrink: 0; white-space: nowrap; }
 @media (max-width: 620px) { .watch-expanded-content { flex: none; width: 100%; } }
+
+.nowon-field { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; margin-bottom: 8px; }
+.nowon-field > span { white-space: nowrap; }

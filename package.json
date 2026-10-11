@@ -20,14 +20,15 @@
     "alert:test": "node src/alertTest.js",
     "alert:test:mock": "node src/alertTest.js --mock",
     "test": "vitest run",
-    "zip": "node scripts/make-zip.js"
+    "zip": "node scripts/make-zip.js",
+    "diagnose:nowon": "node src/diagnoseNowon.js"
   },
   "dependencies": {
+    "@hyunbinseo/holidays-kr": "5.2027.2",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "node-cron": "^3.0.3",
-    "playwright": "^1.62.1",
-    "@hyunbinseo/holidays-kr": "5.2027.2"
+    "playwright": "^1.62.1"
   },
   "devDependencies": {
     "archiver": "^7.0.1",
