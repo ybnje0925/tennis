@@ -3,6 +3,7 @@ import { NOWON_FACILITIES, NOWON_TIMES, validateNowonWatch } from "./nowonRules.
 import { formatKoreanDateWithWeekday, isDateBeforeKstToday } from "./dateFormat.js";
 import { myeonmokSlots, myeonmokSlotLabel } from "./myeonmokSlots.js";
 import { sortWatchesByReservationTime } from "./watchSorting.js";
+import { createScreenHistory } from "./screenHistory.js";
 
 const form = document.querySelector("#watchForm");
 const inviteForm = document.querySelector("#inviteForm");
@@ -50,7 +51,8 @@ const reservationLinks = {
   olympic: document.querySelector("#olympicLink"),
   songpa: document.querySelector("#songpaLink"),
   nowon: document.querySelector("#nowonLink"),
-  hanam: document.querySelector("#hanamLink")
+  hanam: document.querySelector("#hanamLink"),
+  misa: document.querySelector("#misaLink")
 };
 const venueGroupsEl = document.querySelector("#venueGroups");
 const venueSelectionHelpEl = document.querySelector("#venueSelectionHelp");
@@ -177,7 +179,8 @@ function updateReservationLinks() {
     olympic: venuePublicUrls.olympic,
     songpa: providerPublicUrls.songpa,
     nowon: providerPublicUrls.nowon,
-    hanam: providerPublicUrls.hanam
+    hanam: providerPublicUrls.hanam,
+    misa: venuePublicUrls["misa-all"]
   };
 
   for (const [id, url] of Object.entries(links)) {
@@ -889,8 +892,8 @@ async function bootApp() {
   if (!session.authenticated) return;
   trackVisit(trackedPageUser !== currentUser.id);
   trackedPageUser = currentUser.id;
-  goScreen("home");
   await loadOptions();
+  screenHistory.start();
   updateVenueSelection();
   await loadWatches();
   await loadStatus();
@@ -906,7 +909,11 @@ let historyPeriod = "all";
 let historyStatus = "all";
 let historyOffset = null;
 let historyGeneration = 0;
+const screenHistory = createScreenHistory(window, route => renderScreen(route.screen, route.step));
 function goScreen(next) {
+  screenHistory.go(next);
+}
+function renderScreen(next, step = 1) {
   screen = next;
   document.querySelectorAll("[data-screen]").forEach(el => el.classList.toggle("hidden", el.dataset.screen !== next));
   document.querySelectorAll(".bottom [data-go], .side [data-go]").forEach(el => {
@@ -914,7 +921,7 @@ function goScreen(next) {
     el.classList.toggle("on", selected);
     if (selected) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
   });
-  if (next === "new") { setFormStep(1); document.querySelector("#newConnectionNotice").classList.toggle("hidden", Boolean(currentUser?.telegramConnected)); }
+  if (next === "new") { setFormStep(step); document.querySelector("#newConnectionNotice").classList.toggle("hidden", Boolean(currentUser?.telegramConnected)); }
   if (next === "results") loadDeliveries();
   window.scrollTo(0, 0);
   const heading = document.querySelector(`[data-screen="${next}"] h1`);
@@ -949,9 +956,9 @@ document.addEventListener("click", event => {
 document.querySelector("#nextFormStep").addEventListener("click", () => {
   if (!new FormData(form).getAll("venues").length) return setStatus("테니스장을 선택해 주세요.");
   setStatus(currentUser?.telegramConnected ? "" : "텔레그램 연결 후 알림을 등록할 수 있습니다.");
-  setFormStep(2); window.scrollTo(0, 0);
+  screenHistory.go("new", 2);
 });
-document.querySelector("#previousFormStep").addEventListener("click", () => setFormStep(1));
+document.querySelector("#previousFormStep").addEventListener("click", () => screenHistory.back());
 form.addEventListener("change", updatePreview);
 document.querySelector("#deliveryFilter").addEventListener("change", event => { historyStatus = event.target.value; loadDeliveries(); });
 document.querySelector("#deliveryMore").addEventListener("click", () => loadDeliveries(true));
