@@ -10,7 +10,7 @@ import { checkHanamVenues, hanamVenueIdsFromWatches } from "./providers/hanamPro
 import { createProviderTimer, PROVIDER_HARD_TIMEOUT_MS, withTimeout } from "./providerTiming.js";
 import { CheckDiagnosticError, classifyError, diagnosticError, errorMessageForConsole } from "./diagnostics.js";
 import { fileURLToPath } from "node:url";
-import { CookieSession } from "./httpSession.js";
+import { gangdongHttpSession } from "./gangdongHttpSession.js";
 import { parseLegacyCalendarHtml } from "./legacyHttpParser.js";
 
 import { checkMyeonmokVenues } from "./providers/myeonmokProvider.js";
@@ -283,36 +283,17 @@ function addMonths(month, offset) {
 
 export async function checkGangdongVenues(venueIds, options = {}) {
   if (config.legacyHttpEnabled) {
-    try {
-      return await checkGangdongVenuesHttp(venueIds, options);
-    } catch (error) {
-      console.warn(`강동 HTTP 조회 실패 | ${error.message}`);
-      if (!config.legacyHttpFallback) throw error;
-    }
+    return checkGangdongVenuesHttp(venueIds, options);
   }
   return checkGangdongVenuesWithPlaywright(venueIds, options);
 }
 
 async function checkGangdongVenuesHttp(venueIds, options = {}) {
-  const ids = venueIds.filter((venueId) => VENUES[venueId]?.provider === "gangdong");
+  const ids = [...new Set(venueIds.filter((venueId) => VENUES[venueId]?.provider === "gangdong"))];
   if (ids.length === 0) return {};
-  const session = new CookieSession();
-  await session.request("https://gdgd.igangdong.or.kr/bbs/login.php");
-  const login = await session.request("https://gdgd.igangdong.or.kr/bbs/login_check.php", {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      referer: "https://gdgd.igangdong.or.kr/bbs/login.php"
-    },
-    body: new URLSearchParams({
-      rtn_url: "https://gdgd.igangdong.or.kr",
-      rtn_par: "",
-      mb_id: config.gangdongUserId,
-      mb_password: config.gangdongUserPassword
-    })
-  });
-  if (![301, 302, 303, 307, 308].includes(login.status)) throw new Error(`강동 로그인 HTTP ${login.status}`);
   const result = {};
+  const errors = [];
+  let authFailure = null;
   for (const venueId of ids) {
     const dates = options.venueDates?.[venueId] || [];
     const months = Array.from(new Set(dates.map((date) => String(date).slice(0, 7))));
@@ -320,16 +301,23 @@ async function checkGangdongVenuesHttp(venueIds, options = {}) {
     const items = [];
     for (const month of pages) {
       const url = `${VENUES[venueId].url}${month ? `?sch_sym=${encodeURIComponent(month)}` : ""}`;
-      const response = await session.request(url, { headers: { referer: "https://gdgd.igangdong.or.kr/" } });
-      const html = await response.text();
-      if (!response.ok || /로그인 후|아이디를 입력|비밀번호를 입력/.test(html) || !/calendar1_table/.test(html)) {
-        throw new Error(`${VENUES[venueId].name} HTTP 인증/달력 응답이 아닙니다 (${response.status})`);
+      try {
+        if (authFailure) throw authFailure;
+        const html = await gangdongHttpSession.calendar(url);
+        items.push(...parseLegacyCalendarHtml(html, venueId, "gangdong"));
+      } catch (error) {
+        if (error.type === "LOGIN_OR_PROTECTION_PAGE") authFailure = error;
+        errors.push({ provider: "gangdong", venueId, venueName: VENUES[venueId].name,
+          targetDate: dates.filter(date => !month || date.startsWith(month)).join(", ") || null,
+          type: error.type || "PARSE_FAILED", stage: "HTTP", retryable: false,
+          message: error.type ? error.message : "강동 예약 달력 파싱 실패" });
       }
-      items.push(...parseLegacyCalendarHtml(html, venueId, "gangdong"));
     }
-    result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
+    if (items.length > 0 || !errors.some(error => error.venueId === venueId)) {
+      result[venueId] = items.filter((item) => dates.length === 0 || dates.includes(item.date));
+    }
   }
-  return result;
+  return withCheckMeta(result, { errors });
 }
 
 async function checkGangdongVenuesWithPlaywright(venueIds, options = {}) {
